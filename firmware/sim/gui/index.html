@@ -1,0 +1,274 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>MOTO-CTRL sim debug console</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<header>
+    <h1>MOTO-CTRL sim console</h1>
+    <span class="sub">Debug GUI — drives firmware/sim/ over WebSocket</span>
+    <input id="conn-url" type="text" value="ws://127.0.0.1:8010">
+    <button id="btn-connect" class="primary">Connect</button>
+    <button id="btn-disconnect" disabled>Disconnect</button>
+    <label class="row-flex" style="font-size:12px;color:var(--muted)">
+        <input type="checkbox" id="chk-autoreconnect" checked> auto-reconnect
+    </label>
+    <span id="conn-badge" class="badge disconnected"><span class="dot"></span>disconnected</span>
+</header>
+
+<main>
+
+    <section class="panel">
+        <h2>Status</h2>
+        <div class="stat-grid">
+            <div class="stat"><div class="label">Firmware</div><div class="value" id="st-fw">-</div></div>
+            <div class="stat"><div class="label">Lock state</div><div class="value" id="st-lock">-</div></div>
+            <div class="stat"><div class="label">Uptime</div><div class="value" id="st-uptime">-</div></div>
+            <div class="stat"><div class="label">Battery</div><div class="value" id="st-batt">-</div></div>
+            <div class="stat"><div class="label">RSSI</div><div class="value" id="st-rssi">-</div></div>
+            <div class="stat"><div class="label">Fault mask</div><div class="value" id="st-fault">-</div></div>
+            <div class="stat"><div class="label">Cheat-code</div><div class="value" id="st-backoff">-</div></div>
+            <div class="stat"><div class="label">LV cutoff</div><div class="value" id="st-cutoff">-</div></div>
+        </div>
+        <p class="hint">Pushed automatically ~5x/sec while connected (sim ticker), and on every STATUS_GET.</p>
+    </section>
+
+    <section class="panel">
+        <h2>Battery / engine simulation</h2>
+        <div class="slider-row">
+            <span style="width:60px">Battery</span>
+            <input type="range" id="sl-battery" min="0" max="20000" step="100" value="13200">
+            <span class="val" id="sl-battery-val">13.2 V</span>
+        </div>
+        <div class="row-flex" style="margin-top:8px">
+            <label class="row-flex"><input type="checkbox" id="chk-engine-running"> engine running (inhibits starter)</label>
+            <label class="row-flex"><input type="checkbox" id="chk-interlock"> neutral/clutch interlock engaged</label>
+        </div>
+        <p class="hint">engine_running and the low-voltage cutoff are REAL, derived by mc_diag from this
+        battery voltage every tick (thresholds + hysteresis configurable in the Diagnostics panel below) — dragging
+        this slider exercises the actual on-target logic, not a stand-in. The "engine running" checkbox is sugar: it
+        nudges the battery voltage to a value that makes the real derivation land where you asked (see
+        sim_protocol.h) rather than setting the flag directly.</p>
+    </section>
+
+    <section class="panel wide">
+        <h2>Outputs (12 channels)</h2>
+        <div class="channels" id="channels"></div>
+        <div class="row-flex" style="margin-top:10px">
+            <button id="btn-hazard-press">Hazard press</button>
+            <span class="hint">Toggles both TURN_L and TURN_R together (REJECTED if neither is assigned a function
+            below). A channel's mode (plain on/off, PWM dimming, turn-signal blink, or brake-flasher pulse pattern) and
+            the turn auto-cancel timer / blink period / brake pulse timing are all set in the Config JSON panel further
+            down — assign a channel's function to turn_l/turn_r/brake there, set its "mode" to flash_turn/flash_brake to
+            see it blink/pulse; otherwise the switches above just toggle it plain on/off, same as any other channel.</span>
+        </div>
+        <p class="hint">Toggling goes over the real COMMAND channel (SET_OUTPUT), authenticated — for a turn_l/turn_r
+        channel this also does mutual exclusion and arms the auto-cancel timer device-side, same as a
+        real handlebar button would. "current (mA)" injects a raw current-sense reading (SIM_CH_DEBUG) for that
+        channel; the fault badge below it is no longer settable — it's mc_diag's own real classification of that
+        current against the channel's configured thresholds (Diagnostics panel below), same as it would be from real
+        hardware. A channel suppressed by the low-voltage cutoff always reads 0mA/none here, same as a commanded-off
+        channel.</p>
+    </section>
+
+    <section class="panel wide">
+        <h2>Diagnostics</h2>
+        <div class="row-flex" style="margin-bottom:8px">
+            <button id="btn-diag-get-config">Refresh thresholds/cutoff (authed)</button>
+            <button id="btn-diag-save-config">Save thresholds/cutoff (authed)</button>
+            <button id="btn-diag-learn-all">Learn ALL energized channels (authed)</button>
+            <span id="diag-config-summary" class="hint"></span>
+        </div>
+        <div class="channels" id="diag-channels"></div>
+        <div class="row-flex" style="margin-top:10px">
+            <span style="width:150px">Low-voltage cutoff</span>
+            <input type="number" id="diag-lv-cutoff-mv" style="width:80px" min="0" max="65535"> mV
+            <span style="width:80px;margin-left:8px">hysteresis</span>
+            <input type="number" id="diag-lv-cutoff-hyst-mv" style="width:80px" min="0" max="65535"> mV
+        </div>
+        <div class="row-flex" style="margin-top:6px">
+            <span style="width:150px">Engine-running threshold</span>
+            <input type="number" id="diag-engine-run-mv" style="width:80px" min="0" max="65535"> mV
+            <span style="width:80px;margin-left:8px">hysteresis</span>
+            <input type="number" id="diag-engine-run-hyst-mv" style="width:80px" min="0" max="65535"> mV
+        </div>
+        <div class="row-flex" style="margin-top:14px">
+            <span style="width:150px">Calibration: IS gain</span>
+            <input type="number" id="diag-calib-is-gain" style="width:80px" step="0.01">
+            <span style="width:90px;margin-left:8px">IS offset (mV)</span>
+            <input type="number" id="diag-calib-is-offset" style="width:80px">
+            <span style="width:60px;margin-left:8px">kILIS</span>
+            <input type="number" id="diag-calib-kilis" style="width:80px" step="0.1">
+        </div>
+        <div class="row-flex" style="margin-top:6px">
+            <span style="width:150px">Calibration: Vbat gain</span>
+            <input type="number" id="diag-calib-vbat-gain" style="width:80px" step="0.01">
+            <span style="width:90px;margin-left:8px">Vbat offset (mV)</span>
+            <input type="number" id="diag-calib-vbat-offset" style="width:80px">
+            <button id="btn-diag-get-calib">Refresh calibration</button>
+            <button id="btn-diag-save-calib">Save calibration (authed)</button>
+        </div>
+        <p class="hint">Per-channel thresholds and the low-voltage/engine-running voltages ride the exportable JSON
+        config (Config panel); board calibration is its own blob and is NOT wiped by ownership transfer (it describes
+        this simulated "board", not the outgoing owner). "Learn" samples the channel's current live current draw and
+        sets its open-load threshold from it — the channel must be ON.</p>
+    </section>
+
+    <section class="panel">
+        <h2>Virtual buttons</h2>
+        <div class="buttons-grid" id="vbuttons"></div>
+        <p class="hint">Press/hold/combo timing is evaluated by the real mc_input engine in the sim (10ms poll). Short
+        presses feed the lock cheat-code buffer below when the bike is LOCKED, AND dispatch
+        whichever action is bound in the Config JSON's <code>inputs.short_press_action[button]</code> (1 = toggle
+        TURN_L, 2 = toggle TURN_R, 3 = hazard press) — both happen independently, the same button can do both. Hold
+        (mousedown) also simulates a maintained switch for the ignition-switch input, or
+        <code>outputs.brake_switch_input</code>. Generic combo matches (unrelated to the cheat-code) are still just
+        logged — no action bound to them yet.</p>
+    </section>
+
+    <section class="panel wide">
+        <h2>Lock / immobilizer</h2>
+        <div class="row-flex" style="margin-bottom:8px">
+            <label class="row-flex"><input type="checkbox" id="lk-enabled"> immobilizer enabled</label>
+            <label class="row-flex"><input type="checkbox" id="lk-method-phone" checked> phone-as-key</label>
+            <label class="row-flex"><input type="checkbox" id="lk-method-ignswitch"> ignition-switch</label>
+            <select id="lk-ignswitch-input">
+                <option value="-1">switch input: none</option>
+                <option value="0">BTN0</option><option value="1">BTN1</option><option value="2">BTN2</option>
+                <option value="3">BTN3</option><option value="4">BTN4</option><option value="5">BTN5</option>
+                <option value="6">BTN6</option><option value="7">BTN7</option>
+            </select>
+        </div>
+        <div class="row-flex" style="margin-bottom:8px">
+            <span style="width:120px">Auto-lock grace</span>
+            <input type="number" id="lk-grace-ms" min="0" max="65535" value="60000" style="width:90px"> ms
+            <span style="width:120px;margin-left:16px">Cheat-code window</span>
+            <input type="number" id="lk-window-ms" min="0" max="65535" value="5000" style="width:90px"> ms
+            <button id="btn-lk-save-config">Save lock config (authed)</button>
+        </div>
+        <div class="row-flex" style="margin-bottom:8px">
+            <input type="text" id="lk-code-input" placeholder="cheat-code, e.g. 0,1,2,3 (4-10 buttons, 0-7)" style="flex:1">
+            <button id="btn-lk-set-code">Set cheat-code (authed)</button>
+            <button id="btn-lk-clear-code" class="danger">Clear cheat-code (authed)</button>
+            <button id="btn-lk-test-code">Test (practice, authed)</button>
+            <span id="lk-test-result"></span>
+        </div>
+        <div class="row-flex" style="margin-bottom:8px">
+            <button id="btn-lk-lock" class="danger">Lock now</button>
+            <button id="btn-lk-unlock">Unlock (phone-as-key, authed)</button>
+            <button id="btn-lk-get-config">Refresh lock config</button>
+            <span id="lk-config-summary" class="hint"></span>
+        </div>
+        <div class="row-flex">
+            <button id="btn-lk-transfer" class="danger">Transfer ownership (wipe keys + lock, authed)</button>
+        </div>
+        <p class="hint">The cheat-code is entered physically via the Virtual buttons above (short-press each button in
+        sequence within the window) — it is never sent as a set/clear/test payload's plaintext to unlock anything; the
+        device only ever compares a salted hash. There is no separate debug op for the ignition-switch input — assign
+        one of the 8 virtual buttons above as the switch input and hold it (mousedown) to simulate the switch being ON.</p>
+    </section>
+
+    <section class="panel">
+        <h2>Auth / phones</h2>
+        <div id="phones"></div>
+        <div class="row-flex" style="margin-top:8px">
+            <input type="text" id="phone-label" placeholder="phone label" style="flex:1">
+            <button id="btn-add-phone">+ New phone (keypair)</button>
+        </div>
+        <div class="row-flex" style="margin-top:10px">
+            <button id="btn-unauth-test">Test: send SET_OUTPUT unauthenticated</button>
+            <span id="unauth-result"></span>
+        </div>
+    </section>
+
+    <section class="panel">
+        <h2>Fault injection / lifecycle</h2>
+        <div class="row-flex" style="margin-bottom:8px">
+            <button id="btn-force-disconnect">Force BLE disconnect</button>
+            <button id="btn-force-reboot" class="danger">Force reboot / watchdog trip</button>
+            <button id="btn-reset-faults">Reset all faults</button>
+        </div>
+        <div class="row-flex">
+            <select id="nvs-target">
+                <option value="0">config</option>
+                <option value="1">keystore</option>
+                <option value="2" selected>both (config + keystore)</option>
+                <option value="3">lock</option>
+                <option value="4">calibration</option>
+            </select>
+            <button id="btn-corrupt-nvs" class="danger">Corrupt fake NVS</button>
+            <span class="hint">Effect appears on next Force Reboot (mirrors real flash corruption — only discovered on read).</span>
+        </div>
+    </section>
+
+    <section class="panel">
+        <h2>OTA (docs/PROTOCOL.md §10)</h2>
+        <p class="hint">Generates a synthetic image locally, signs it with the sim's fixed TEST OTA key, and drives begin/chunk/commit — try toggling "engine running" above first to see safe-state gating reject it.</p>
+        <div class="row-flex" style="margin-bottom:8px">
+            <label>Image size (KB) <input type="number" id="ota-size-kb" value="16" min="1" max="1536" style="width:5em"></label>
+            <button id="btn-ota-transfer">Generate + transfer signed image</button>
+            <span id="ota-result"></span>
+        </div>
+        <div class="row-flex">
+            <button id="btn-ota-status">Get status</button>
+            <span id="ota-status"></span>
+            <button id="btn-ota-reboot">Reboot (apply)</button>
+            <button id="btn-ota-abort" class="danger">Abort</button>
+        </div>
+    </section>
+
+    <section class="panel">
+        <h2>Event log (docs/PROTOCOL.md §15)</h2>
+        <div class="row-flex" style="margin-bottom:8px">
+            <button id="btn-event-log-get">Fetch full log</button>
+        </div>
+        <div id="event-log-list" class="hint">(not fetched yet)</div>
+    </section>
+
+    <section class="panel">
+        <h2>Config</h2>
+        <div class="row-flex" style="margin-bottom:8px">
+            <button id="btn-config-read">Read config</button>
+            <button id="btn-config-download">Download JSON</button>
+            <input type="file" id="config-file" accept="application/json">
+            <button id="btn-config-write">Write + commit</button>
+        </div>
+        <textarea id="config-text" spellcheck="false" placeholder="Read config, or paste/edit JSON here, then Write + commit."></textarea>
+    </section>
+
+    <section class="panel wide">
+        <h2>Scenario recorder</h2>
+        <div class="row-flex">
+            <button id="btn-rec-start">● Start recording</button>
+            <button id="btn-rec-stop" disabled>■ Stop</button>
+            <button id="btn-rec-save" disabled>Download recording</button>
+            <span id="rec-status" class="hint"></span>
+            <span class="grow"></span>
+            <input type="file" id="scenario-file" accept="application/json">
+            <button id="btn-scenario-load">Load + replay scenario</button>
+        </div>
+        <p class="hint">Recording captures every GUI action you take (with real relative timing) as a JSON action list —
+        e.g. "wrong cheat code 3x while battery low" — for exact, repeatable replay. See docs/TESTING.md.</p>
+    </section>
+
+    <section class="panel wide">
+        <h2>Event log</h2>
+        <div class="row-flex" style="margin-bottom:8px">
+            <button id="btn-clear-log" class="small">Clear (local view only)</button>
+            <span class="hint">Live pushes + full history replay on connect (device-side ring buffer, 128 entries).</span>
+        </div>
+        <div class="log" id="log"></div>
+    </section>
+
+</main>
+
+<footer>MOTO-CTRL — pre-hardware test harness. Not a certified device UI; see DISCLAIMER.md.</footer>
+
+<script src="vendor/nacl.min.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

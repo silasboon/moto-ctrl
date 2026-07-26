@@ -1,0 +1,16 @@
+{
+  "name": "moto-ctrl-sim-itest",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Integration tests that drive the MOTO-CTRL host simulator over WebSocket, proving the wire protocol and C<->JS Ed25519 interop.",
+  "type": "module",
+  "scripts": {
+    "test": "node --test"
+  },
+  "dependencies": {
+    "tweetnacl": "1.0.3"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

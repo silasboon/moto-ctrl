@@ -1,0 +1,16 @@
+# ESP-IDF firmware build artifacts
+firmware/build/
+firmware/sdkconfig
+firmware/sdkconfig.old
+firmware/managed_components/
+firmware/dependencies.lock
+firmware/qemu_boot.log
+
+# Host simulator build artifacts
+firmware/sim/build/
+
+# OS / editor
+.DS_Store
+*.swp
+.vscode/
+.idea/

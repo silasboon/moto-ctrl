@@ -1,0 +1,40 @@
+# MOTO-CTRL default sdkconfig
+#
+# This file seeds `sdkconfig` on a clean build (`idf.py set-target esp32s3`
+# regenerates `sdkconfig` from this + Kconfig defaults). Board is
+# ESP32-S3-WROOM-1-N4: 4MB flash, no PSRAM. See hardware/PINOUT.md.
+
+CONFIG_IDF_TARGET="esp32s3"
+
+# --- Flash / no PSRAM ---
+CONFIG_ESPTOOLPY_FLASHSIZE_4MB=y
+CONFIG_ESPTOOLPY_FLASHSIZE="4MB"
+# This module has no PSRAM; do not enable CONFIG_SPIRAM.
+CONFIG_SPIRAM=n
+
+# --- Partition table (custom, OTA A/B from day one — see partitions.csv) ---
+CONFIG_PARTITION_TABLE_CUSTOM=y
+CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"
+CONFIG_PARTITION_TABLE_FILENAME="partitions.csv"
+
+# --- Bluetooth: NimBLE only, BLE-only (no classic BT, no Bluedroid) ---
+CONFIG_BT_ENABLED=y
+CONFIG_BT_NIMBLE_ENABLED=y
+CONFIG_BT_CONTROLLER_ONLY=n
+CONFIG_BT_BLUEDROID_ENABLED=n
+
+# LE Secure Connections + bonding, with bonds persisted to NVS so pairings
+# survive reboots (AGENTS.md #4). ble_store_config_init() requires this.
+CONFIG_BT_NIMBLE_NVS_PERSIST=y
+CONFIG_BT_NIMBLE_SM_LEGACY=y
+CONFIG_BT_NIMBLE_SM_SC=y
+
+# --- App rollback support (OTA, phase 8) ---
+CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y
+
+# --- Watchdogs ---
+CONFIG_ESP_TASK_WDT_EN=y
+CONFIG_ESP_TASK_WDT_PANIC=y
+
+# --- No WiFi in v1 (BLE only) ---
+CONFIG_ESP_WIFI_ENABLED=n

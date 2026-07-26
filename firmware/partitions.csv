@@ -1,0 +1,18 @@
+# MOTO-CTRL partition table — ESP32-S3-WROOM-1-N4 (4MB flash, no PSRAM)
+#
+# OTA A/B with automatic rollback on failed boot (see AGENTS.md: OTA + config
+# migration). ota_0/ota_1 are sized equally so either slot can hold either
+# firmware image.
+#
+# Name,     Type, SubType,  Offset,    Size,     Flags
+nvs,        data, nvs,      0x9000,    0x8000,
+otadata,    data, ota,      0x11000,   0x2000,
+phy_init,   data, phy,      0x13000,   0x1000,
+ota_0,      app,  ota_0,    0x20000,   0x180000,
+ota_1,      app,  ota_1,    0x1A0000,  0x180000,
+evtlog,     data, nvs,      0x320000,  0x20000,
+# 0x340000-0x400000 (768KB) intentionally still unallocated for future use.
+# `evtlog` (128KB, its own NVS partition — nvs_event_log_hal.c) gives the
+# event log dedicated headroom, isolated from the config/keystore/lock/calib
+# blobs sharing the 32KB `nvs` partition above, rather than competing with
+# them for space and erase-cycle budget.

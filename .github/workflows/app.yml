@@ -1,0 +1,41 @@
+name: app
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  test:
+    name: Typecheck, lint, test
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: app
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: app/package-lock.json
+
+      - run: npm ci
+
+      - run: npm run typecheck
+
+      - run: npm run lint
+
+      # Builds firmware/sim so the live integration test
+      # (src/__tests__/sim.itest.test.js) can spawn the real simulator
+      # rather than only exercising MotoClient against a fake transport —
+      # same binary firmware/sim/itest/ and the debug GUI already prove the
+      # protocol against. Independent of the ESP-IDF build (plain CMake).
+      - name: Build firmware/sim
+        working-directory: firmware/sim
+        run: |
+          cmake -S . -B build
+          cmake --build build
+
+      - run: npm test -- --ci

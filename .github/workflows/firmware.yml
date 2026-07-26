@@ -1,0 +1,107 @@
+name: firmware
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  firmware-build:
+    name: ESP-IDF build (esp32s3)
+    runs-on: ubuntu-latest
+    container: espressif/idf:latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build firmware
+        shell: bash
+        run: |
+          . $IDF_PATH/export.sh
+          cd firmware
+          idf.py set-target esp32s3
+          idf.py build
+
+  firmware-qemu:
+    name: QEMU boot validation (esp32s3)
+    runs-on: ubuntu-latest
+    container: espressif/idf:latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build firmware
+        shell: bash
+        run: |
+          . $IDF_PATH/export.sh
+          cd firmware
+          idf.py set-target esp32s3
+          idf.py build
+
+      - name: Boot under QEMU and check boot-sequence markers
+        shell: bash
+        run: |
+          . $IDF_PATH/export.sh
+          cd firmware
+          python "$IDF_PATH/tools/idf_tools.py" install qemu-xtensa
+
+          # idf.py qemu (no `monitor` chained) runs QEMU in the foreground
+          # attached to stdio, so plain redirection captures the serial log.
+          # The firmware boots, then NimBLE controller init hits a QEMU-only
+          # assert (QEMU's Xtensa target has no BLE radio emulation) and
+          # crash-reboot-loops forever — expected, see docs/TESTING.md. This
+          # job only validates the boot sequence up to that known gap, so it
+          # always kills QEMU on a timeout rather than waiting for exit.
+          timeout 30 idf.py qemu > qemu_boot.log 2>&1 || true
+
+          echo "----- QEMU serial log -----"
+          cat qemu_boot.log
+          echo "----------------------------"
+
+          markers=(
+            "MOTO-CTRL boot: early_init done"
+            "MOTO-CTRL boot: NVS init done"
+            "MOTO-CTRL boot: outputs restored"
+            "MOTO-CTRL boot: lock state restored"
+            "MOTO-CTRL boot: diagnostics engine ready"
+            "MOTO-CTRL boot: input engine ready"
+            "MOTO-CTRL boot: watchdog init done"
+            "MOTO-CTRL boot: starting BLE stack"
+          )
+          missing=0
+          for m in "${markers[@]}"; do
+            if ! grep -qF "$m" qemu_boot.log; then
+              echo "MISSING boot marker: $m"
+              missing=1
+            fi
+          done
+          if [ "$missing" -ne 0 ]; then
+            echo "QEMU boot validation FAILED."
+            exit 1
+          fi
+          echo "QEMU boot validation OK: config load, output restore, lock state restore, diagnostics init, input init, and watchdog init all confirmed on real (emulated) hardware."
+
+  sim-build-test:
+    name: Host simulator build + tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: firmware/sim/itest/package-lock.json
+
+      - name: Configure
+        run: cmake -S firmware/sim -B firmware/sim/build
+
+      - name: Build
+        run: cmake --build firmware/sim/build
+
+      - name: Unit tests (ctest)
+        run: ctest --test-dir firmware/sim/build --output-on-failure
+
+      - name: Integration tests (WebSocket + Ed25519 interop)
+        working-directory: firmware/sim/itest
+        run: |
+          npm ci
+          npm test

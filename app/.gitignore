@@ -1,0 +1,28 @@
+node_modules/
+.expo/
+dist/
+web-build/
+
+# Xcode
+ios/build/
+ios/Pods/
+*.xcworkspace
+!ios/*.xcworkspace/contents.xcworkspacedata
+
+# Android
+android/.gradle/
+android/app/build/
+android/build/
+android/local.properties
+*.keystore
+!debug.keystore
+
+# Metro
+.metro-health-check*
+
+# Testing
+coverage/
+
+# Misc
+*.log
+.DS_Store
