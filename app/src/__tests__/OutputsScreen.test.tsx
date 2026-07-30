@@ -5,6 +5,7 @@
  * rejects such a config outright, so the UI must not let you build one.
  */
 import React from 'react';
+import { Alert } from 'react-native';
 import {
   act,
   create,
@@ -127,5 +128,81 @@ describe('OutputsScreen', () => {
       byLabel(tree, 'Save').props.onPress();
     });
     expect(calls.writes[0]!.outputs.channels[2]!.name).toBe('Heated Grips');
+  });
+
+  /* Everything on this screen is local until Save, and re-entering a set of
+   * channel names and roles is minutes of work — leaving must not throw it
+   * away silently. */
+  describe('leaving with unsaved edits', () => {
+    const alertSpy = jest.spyOn(Alert, 'alert').mockImplementation(() => {});
+    afterEach(() => alertSpy.mockClear());
+
+    async function mountWith(onDone: () => void) {
+      const { client } = makeClient();
+      let tree!: ReactTestRenderer;
+      await act(async () => {
+        tree = create(<OutputsScreen client={client} onDone={onDone} />);
+      });
+      return { tree, client };
+    }
+
+    test('back leaves straight away when nothing was edited', async () => {
+      const onDone = jest.fn();
+      const { tree } = await mountWith(onDone);
+
+      await act(async () => {
+        byLabel(tree, 'Back').props.onPress();
+      });
+
+      expect(alertSpy).not.toHaveBeenCalled();
+      expect(onDone).toHaveBeenCalledTimes(1);
+    });
+
+    test('back asks first when there are edits, and stays put', async () => {
+      const onDone = jest.fn();
+      const { tree } = await mountWith(onDone);
+
+      await act(async () => {
+        byLabel(tree, 'Output 3, On / off toggle').props.onPress();
+      });
+      await act(async () => {
+        byLabel(tree, 'Name').props.onChangeText('Heated Grips');
+      });
+      await act(async () => {
+        byLabel(tree, 'Back').props.onPress();
+      });
+
+      expect(onDone).not.toHaveBeenCalled();
+      expect(alertSpy).toHaveBeenCalledTimes(1);
+
+      /* Confirming discards; the buttons are [Keep editing, Discard]. */
+      const buttons = alertSpy.mock.calls[0]![2]!;
+      expect(buttons.map(b => b.text)).toEqual(['Keep editing', 'Discard']);
+      act(() => {
+        buttons[1]!.onPress?.();
+      });
+      expect(onDone).toHaveBeenCalledTimes(1);
+    });
+
+    test('a saved screen is clean again', async () => {
+      const onDone = jest.fn();
+      const { tree } = await mountWith(onDone);
+
+      await act(async () => {
+        byLabel(tree, 'Output 3, On / off toggle').props.onPress();
+      });
+      await act(async () => {
+        byLabel(tree, 'Name').props.onChangeText('Heated Grips');
+      });
+      await act(async () => {
+        byLabel(tree, 'Save').props.onPress();
+      });
+      await act(async () => {
+        byLabel(tree, 'Back').props.onPress();
+      });
+
+      expect(alertSpy).not.toHaveBeenCalled();
+      expect(onDone).toHaveBeenCalledTimes(1);
+    });
   });
 });

@@ -20,14 +20,7 @@
  * DashboardScreen/LockScreen/PinMapperScreen already each follow.
  */
 import React, { useEffect, useState } from 'react';
-import {
-  ScrollView,
-  StyleSheet,
-  Text,
-  TextInput,
-  TouchableOpacity,
-  View,
-} from 'react-native';
+import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 
 import {
   DIAG_FAULT,
@@ -35,6 +28,11 @@ import {
   OUTPUT_COUNT,
 } from '../protocol/constants';
 import type { MotoClient } from '../protocol/MotoClient';
+import {
+  KeyboardAwareScroll,
+  NumberInput,
+  useLeaveGuard,
+} from '../ui/components';
 import { colors } from '../ui/theme';
 import {
   defaultDiagCalib,
@@ -74,6 +72,11 @@ export function DiagnosticsScreen({
   const [calibResult, setCalibResult] = useState<string | null>(null);
   const [learnBusy, setLearnBusy] = useState<number | null>(null); // channel index, or -1 for "all"
   const [learnResult, setLearnResult] = useState<string | null>(null);
+  /* Serialised copies of what the board last told us. Thresholds and
+   * calibration save separately, so each needs its own baseline — see
+   * OutputsScreen for why this is a string rather than an object. */
+  const [diagBaseline, setDiagBaseline] = useState<string | null>(null);
+  const [calibBaseline, setCalibBaseline] = useState<string | null>(null);
 
   useEffect(() => {
     Promise.all([
@@ -85,6 +88,8 @@ export function DiagnosticsScreen({
         setDiagConfig(cfg);
         setCalib(cal);
         setConfig(deviceCfg);
+        setDiagBaseline(JSON.stringify(cfg));
+        setCalibBaseline(JSON.stringify(cal));
       })
       .catch((err: unknown) =>
         setError(err instanceof Error ? err.message : String(err)),
@@ -114,7 +119,9 @@ export function DiagnosticsScreen({
 
   async function refreshConfig(): Promise<void> {
     try {
-      setDiagConfig(await client.diagGetConfig());
+      const fresh = await client.diagGetConfig();
+      setDiagConfig(fresh);
+      setDiagBaseline(JSON.stringify(fresh));
     } catch {
       // Keep showing the last-known config; the error surfaces from
       // whichever action triggered this refresh instead.
@@ -146,7 +153,11 @@ export function DiagnosticsScreen({
       setCalibResult(
         result.ok ? 'Saved.' : `Rejected by device: ${result.resultName}`,
       );
-      if (result.ok) setCalib(await client.diagGetCalib());
+      if (result.ok) {
+        const fresh = await client.diagGetCalib();
+        setCalib(fresh);
+        setCalibBaseline(JSON.stringify(fresh));
+      }
     } catch (err) {
       setCalibResult(err instanceof Error ? err.message : String(err));
     } finally {
@@ -186,6 +197,12 @@ export function DiagnosticsScreen({
     });
   }
 
+  const dirty =
+    diagBaseline !== null &&
+    (JSON.stringify(diagConfig) !== diagBaseline ||
+      JSON.stringify(calib) !== calibBaseline);
+  const back = useLeaveGuard(dirty, onDone);
+
   if (loading) {
     return (
       <View style={styles.center}>
@@ -195,10 +212,13 @@ export function DiagnosticsScreen({
   }
 
   return (
-    <ScrollView style={styles.container} contentContainerStyle={styles.content}>
+    <KeyboardAwareScroll
+      style={styles.container}
+      contentContainerStyle={styles.content}
+    >
       <View style={styles.header}>
         <Text style={styles.title}>Diagnostics</Text>
-        <TouchableOpacity onPress={onDone}>
+        <TouchableOpacity onPress={back}>
           <Text style={styles.link}>Back</Text>
         </TouchableOpacity>
       </View>
@@ -206,61 +226,45 @@ export function DiagnosticsScreen({
       <Text style={styles.sectionTitle}>Battery / cutoff</Text>
       <View style={styles.row}>
         <Text style={styles.rowLabel}>Low-voltage cutoff (mV)</Text>
-        <TextInput
-          placeholderTextColor={colors.textFaint}
+        <NumberInput
           style={styles.numInput}
-          keyboardType="number-pad"
-          value={String(diagConfig.lvCutoffMv)}
-          onChangeText={v =>
-            setDiagConfig(prev => ({
-              ...prev,
-              lvCutoffMv: parseInt(v, 10) || 0,
-            }))
+          value={diagConfig.lvCutoffMv}
+          min={0}
+          onChangeValue={v =>
+            setDiagConfig(prev => ({ ...prev, lvCutoffMv: v }))
           }
         />
       </View>
       <View style={styles.row}>
         <Text style={styles.rowLabel}>Cutoff hysteresis (mV)</Text>
-        <TextInput
-          placeholderTextColor={colors.textFaint}
+        <NumberInput
           style={styles.numInput}
-          keyboardType="number-pad"
-          value={String(diagConfig.lvCutoffHysteresisMv)}
-          onChangeText={v =>
-            setDiagConfig(prev => ({
-              ...prev,
-              lvCutoffHysteresisMv: parseInt(v, 10) || 0,
-            }))
+          value={diagConfig.lvCutoffHysteresisMv}
+          min={0}
+          onChangeValue={v =>
+            setDiagConfig(prev => ({ ...prev, lvCutoffHysteresisMv: v }))
           }
         />
       </View>
       <View style={styles.row}>
         <Text style={styles.rowLabel}>Engine-running threshold (mV)</Text>
-        <TextInput
-          placeholderTextColor={colors.textFaint}
+        <NumberInput
           style={styles.numInput}
-          keyboardType="number-pad"
-          value={String(diagConfig.engineRunMv)}
-          onChangeText={v =>
-            setDiagConfig(prev => ({
-              ...prev,
-              engineRunMv: parseInt(v, 10) || 0,
-            }))
+          value={diagConfig.engineRunMv}
+          min={0}
+          onChangeValue={v =>
+            setDiagConfig(prev => ({ ...prev, engineRunMv: v }))
           }
         />
       </View>
       <View style={styles.row}>
         <Text style={styles.rowLabel}>Engine-run hysteresis (mV)</Text>
-        <TextInput
-          placeholderTextColor={colors.textFaint}
+        <NumberInput
           style={styles.numInput}
-          keyboardType="number-pad"
-          value={String(diagConfig.engineRunHysteresisMv)}
-          onChangeText={v =>
-            setDiagConfig(prev => ({
-              ...prev,
-              engineRunHysteresisMv: parseInt(v, 10) || 0,
-            }))
+          value={diagConfig.engineRunHysteresisMv}
+          min={0}
+          onChangeValue={v =>
+            setDiagConfig(prev => ({ ...prev, engineRunHysteresisMv: v }))
           }
         />
       </View>
@@ -313,24 +317,18 @@ export function DiagnosticsScreen({
             </View>
             <View style={styles.row}>
               <Text style={styles.rowLabelSmall}>Open-load (mA)</Text>
-              <TextInput
-                placeholderTextColor={colors.textFaint}
+              <NumberInput
                 style={styles.numInputSmall}
-                keyboardType="number-pad"
-                value={String(diagConfig.channels[ch]?.openLoadMa ?? 0)}
-                onChangeText={v =>
-                  setChannelField(ch, 'openLoadMa', parseInt(v, 10) || 0)
-                }
+                value={diagConfig.channels[ch]?.openLoadMa ?? 0}
+                min={0}
+                onChangeValue={v => setChannelField(ch, 'openLoadMa', v)}
               />
               <Text style={styles.rowLabelSmall}>Overcurrent (mA)</Text>
-              <TextInput
-                placeholderTextColor={colors.textFaint}
+              <NumberInput
                 style={styles.numInputSmall}
-                keyboardType="number-pad"
-                value={String(diagConfig.channels[ch]?.overcurrentMa ?? 0)}
-                onChangeText={v =>
-                  setChannelField(ch, 'overcurrentMa', parseInt(v, 10) || 0)
-                }
+                value={diagConfig.channels[ch]?.overcurrentMa ?? 0}
+                min={0}
+                onChangeValue={v => setChannelField(ch, 'overcurrentMa', v)}
               />
               <TouchableOpacity
                 style={[
@@ -357,62 +355,48 @@ export function DiagnosticsScreen({
       </Text>
       <View style={styles.row}>
         <Text style={styles.rowLabel}>IS gain</Text>
-        <TextInput
-          placeholderTextColor={colors.textFaint}
+        <NumberInput
           style={styles.numInput}
-          keyboardType="numeric"
-          value={String(calib.isGain)}
-          onChangeText={v =>
-            setCalib(prev => ({ ...prev, isGain: parseFloat(v) || 0 }))
-          }
+          value={calib.isGain}
+          decimal
+          min={0}
+          onChangeValue={v => setCalib(prev => ({ ...prev, isGain: v }))}
         />
       </View>
       <View style={styles.row}>
         <Text style={styles.rowLabel}>IS offset (mV)</Text>
-        <TextInput
-          placeholderTextColor={colors.textFaint}
+        <NumberInput
           style={styles.numInput}
-          keyboardType="number-pad"
-          value={String(calib.isOffsetMv)}
-          onChangeText={v =>
-            setCalib(prev => ({ ...prev, isOffsetMv: parseInt(v, 10) || 0 }))
-          }
+          value={calib.isOffsetMv}
+          onChangeValue={v => setCalib(prev => ({ ...prev, isOffsetMv: v }))}
         />
       </View>
       <View style={styles.row}>
         <Text style={styles.rowLabel}>kILIS</Text>
-        <TextInput
-          placeholderTextColor={colors.textFaint}
+        <NumberInput
           style={styles.numInput}
-          keyboardType="numeric"
-          value={String(calib.kilis)}
-          onChangeText={v =>
-            setCalib(prev => ({ ...prev, kilis: parseFloat(v) || 0 }))
-          }
+          value={calib.kilis}
+          decimal
+          min={0}
+          onChangeValue={v => setCalib(prev => ({ ...prev, kilis: v }))}
         />
       </View>
       <View style={styles.row}>
         <Text style={styles.rowLabel}>Vbat gain</Text>
-        <TextInput
-          placeholderTextColor={colors.textFaint}
+        <NumberInput
           style={styles.numInput}
-          keyboardType="numeric"
-          value={String(calib.vbatGain)}
-          onChangeText={v =>
-            setCalib(prev => ({ ...prev, vbatGain: parseFloat(v) || 0 }))
-          }
+          value={calib.vbatGain}
+          decimal
+          min={0}
+          onChangeValue={v => setCalib(prev => ({ ...prev, vbatGain: v }))}
         />
       </View>
       <View style={styles.row}>
         <Text style={styles.rowLabel}>Vbat offset (mV)</Text>
-        <TextInput
-          placeholderTextColor={colors.textFaint}
+        <NumberInput
           style={styles.numInput}
-          keyboardType="number-pad"
-          value={String(calib.vbatOffsetMv)}
-          onChangeText={v =>
-            setCalib(prev => ({ ...prev, vbatOffsetMv: parseInt(v, 10) || 0 }))
-          }
+          value={calib.vbatOffsetMv}
+          onChangeValue={v => setCalib(prev => ({ ...prev, vbatOffsetMv: v }))}
         />
       </View>
       {calibResult && <Text style={styles.hint}>{calibResult}</Text>}
@@ -425,7 +409,7 @@ export function DiagnosticsScreen({
           {calibSaving ? 'Saving…' : 'Save calibration'}
         </Text>
       </TouchableOpacity>
-    </ScrollView>
+    </KeyboardAwareScroll>
   );
 }
 

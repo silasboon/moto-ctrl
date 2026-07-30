@@ -50,8 +50,10 @@ import {
   Field,
   Loading,
   Notice,
+  NumberField,
   Screen,
   SectionHeader,
+  useLeaveGuard,
 } from '../ui/components';
 import { colors, radius, space, type } from '../ui/theme';
 
@@ -145,15 +147,24 @@ export function ButtonsScreen({ client, onDone }: Props): React.JSX.Element {
     press: PressKey;
   } | null>(null);
 
+  /** Serialised copy of what the board last gave us — see OutputsScreen. */
+  const [baseline, setBaseline] = useState<string | null>(null);
+
   useEffect(() => {
     client
       .configRead()
-      .then(setConfig)
+      .then(c => {
+        setConfig(c);
+        setBaseline(JSON.stringify(c));
+      })
       .catch((err: unknown) =>
         setError(err instanceof Error ? err.message : String(err)),
       )
       .finally(() => setLoading(false));
   }, [client]);
+
+  const dirty = config !== null && JSON.stringify(config) !== baseline;
+  const back = useLeaveGuard(dirty, onDone);
 
   /* Learn mode must not outlive this screen: if the rider navigates away (or
    * the component unmounts for any reason) turn it back off, so the board
@@ -310,6 +321,7 @@ export function ButtonsScreen({ client, onDone }: Props): React.JSX.Element {
       const result = await client.configWrite(config);
       if (result.ok) {
         setSaved(true);
+        setBaseline(JSON.stringify(config));
       } else {
         setError(`Device rejected the config: ${result.resultName}`);
       }
@@ -323,7 +335,7 @@ export function ButtonsScreen({ client, onDone }: Props): React.JSX.Element {
   if (loading) return <Loading label="Reading configuration…" />;
   if (!config) {
     return (
-      <Screen title="Buttons" onBack={onDone}>
+      <Screen title="Buttons" onBack={back}>
         <Notice tone="danger">
           {error ?? 'Could not read the configuration from the device.'}
         </Notice>
@@ -334,17 +346,18 @@ export function ButtonsScreen({ client, onDone }: Props): React.JSX.Element {
   return (
     <Screen
       title="Buttons"
-      onBack={onDone}
+      onBack={back}
       trailing={
         <Button
           label={saving ? 'Saving' : 'Save'}
           onPress={save}
           busy={saving}
+          tone={dirty ? 'primary' : 'secondary'}
         />
       }
     >
       {error && <Notice tone="danger">{error}</Notice>}
-      {saved && <Notice tone="on">Saved to the device.</Notice>}
+      {saved && !dirty && <Notice tone="on">Saved to the device.</Notice>}
 
       {/* --- identify --- */}
       <Card>
@@ -640,15 +653,11 @@ export function ButtonsScreen({ client, onDone }: Props): React.JSX.Element {
               })}
             </View>
 
-            <Field
+            <NumberField
               label="Press window (ms)"
-              keyboardType="number-pad"
-              value={String(combo.window_ms)}
-              onChangeText={v =>
-                updateChord(ci, {
-                  window_ms: Math.max(0, parseInt(v, 10) || 0),
-                })
-              }
+              value={combo.window_ms}
+              min={0}
+              onChangeValue={v => updateChord(ci, { window_ms: v })}
               hint="How far apart the presses may be and still count as simultaneous. 120ms suits most riders."
             />
           </Card>

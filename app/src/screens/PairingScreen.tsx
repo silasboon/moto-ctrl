@@ -41,10 +41,19 @@ import {
 } from '../ui/components';
 import { colors, radius, space, type } from '../ui/theme';
 
+/** How long to look before giving up — measured from when the radio is
+ * actually scanning, not from the tap, since waiting for Bluetooth to come up
+ * is not time spent looking. */
 const SCAN_MS = 10000;
 
 type PairingStatus =
-  'idle' | 'scanning' | 'connecting' | 'authenticating' | 'enrolling' | 'error';
+  | 'idle'
+  | 'waiting'
+  | 'scanning'
+  | 'connecting'
+  | 'authenticating'
+  | 'enrolling'
+  | 'error';
 
 interface Props {
   onPaired: (client: MotoClient, device: DeviceDescriptor) => void;
@@ -58,6 +67,8 @@ export function PairingScreen({ onPaired, notice }: Props): React.JSX.Element {
   const [found, setFound] = useState<DeviceDescriptor[]>([]);
   const [status, setStatus] = useState<PairingStatus>('idle');
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  /** Why the radio isn't scanning yet — "Bluetooth is off", and so on. */
+  const [waitingMsg, setWaitingMsg] = useState<string | null>(null);
 
   const stopScanRef = useRef<(() => void) | null>(null);
   const scanTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -154,20 +165,46 @@ export function PairingScreen({ onPaired, notice }: Props): React.JSX.Element {
       );
       return;
     }
+    /* Tapping Scan while one is already running (or still waiting on the
+     * radio) must not leave the old subscription behind. */
+    stopScan();
     setErrorMsg(null);
+    setWaitingMsg(null);
     setFound([]);
-    setStatus('scanning');
+    setStatus('waiting');
 
     const ble = new BlePlxTransport();
-    stopScanRef.current = ble.scan(device => {
-      setFound(prev =>
-        prev.some(d => d.id === device.id) ? prev : [...prev, device],
-      );
-    });
-    scanTimerRef.current = setTimeout(() => {
-      stopScan();
-      setStatus(prev => (prev === 'scanning' ? 'idle' : prev));
-    }, SCAN_MS);
+    stopScanRef.current = ble.scan(
+      device => {
+        setFound(prev =>
+          prev.some(d => d.id === device.id) ? prev : [...prev, device],
+        );
+      },
+      scanStatus => {
+        if (scanStatus.state === 'scanning') {
+          setWaitingMsg(null);
+          setStatus(prev => (prev === 'waiting' ? 'scanning' : prev));
+          /* Start the clock here: the radio may have taken a second or two to
+           * come up, and that shouldn't eat the search window. */
+          if (scanTimerRef.current) clearTimeout(scanTimerRef.current);
+          scanTimerRef.current = setTimeout(() => {
+            stopScan();
+            setStatus(prev => (prev === 'scanning' ? 'idle' : prev));
+          }, SCAN_MS);
+          return;
+        }
+        if (scanStatus.state === 'waiting') {
+          setWaitingMsg(scanStatus.message);
+          setStatus(prev =>
+            prev === 'scanning' || prev === 'waiting' ? 'waiting' : prev,
+          );
+          return;
+        }
+        stopScan();
+        setStatus('error');
+        setErrorMsg(scanStatus.message);
+      },
+    );
   }, [ensureBlePermissions, stopScan]);
 
   /* Load identity, remember which board we last used, and start looking. */
@@ -203,6 +240,8 @@ export function PairingScreen({ onPaired, notice }: Props): React.JSX.Element {
     if (match) void connectAndPair(match, identity);
   }, [found, identity, knownDeviceId, connectAndPair]);
 
+  const looking = status === 'scanning' || status === 'waiting';
+
   const statusLine =
     status === 'connecting'
       ? 'Connecting…'
@@ -210,18 +249,20 @@ export function PairingScreen({ onPaired, notice }: Props): React.JSX.Element {
         ? 'Authenticating…'
         : status === 'enrolling'
           ? 'Pairing this phone…'
-          : status === 'scanning'
-            ? 'Looking for your board…'
-            : null;
+          : status === 'waiting'
+            ? (waitingMsg ?? 'Waiting for Bluetooth…')
+            : status === 'scanning'
+              ? 'Looking for your board…'
+              : null;
 
   return (
     <Screen
       title="MOTO-CTRL"
       trailing={
         <Button
-          label={status === 'scanning' ? 'Scanning' : 'Scan'}
+          label={looking ? 'Scanning' : 'Scan'}
           tone="secondary"
-          busy={status === 'scanning'}
+          busy={looking}
           disabled={busy}
           onPress={() => void startScan()}
         />
@@ -231,7 +272,11 @@ export function PairingScreen({ onPaired, notice }: Props): React.JSX.Element {
       {status === 'error' && errorMsg && (
         <Notice tone="danger">{errorMsg}</Notice>
       )}
-      {statusLine && <Notice tone="info">{statusLine}</Notice>}
+      {statusLine && (
+        <Notice tone={status === 'waiting' ? 'warn' : 'info'}>
+          {statusLine}
+        </Notice>
+      )}
 
       <SectionHeader
         hint={
@@ -246,11 +291,19 @@ export function PairingScreen({ onPaired, notice }: Props): React.JSX.Element {
       {found.length === 0 ? (
         <Card>
           <EmptyState
-            title={status === 'scanning' ? 'Searching…' : 'No boards found'}
+            title={
+              status === 'waiting'
+                ? 'Waiting for Bluetooth'
+                : looking
+                  ? 'Searching…'
+                  : 'No boards found'
+            }
             body={
-              status === 'scanning'
-                ? 'Make sure the board has power and is within a few metres.'
-                : 'Check the board has power, then scan again.'
+              status === 'waiting'
+                ? (waitingMsg ?? undefined)
+                : looking
+                  ? 'Make sure the board has power and is within a few metres.'
+                  : 'Check the board has power, then scan again.'
             }
           />
         </Card>

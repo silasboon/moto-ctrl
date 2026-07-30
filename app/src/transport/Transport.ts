@@ -26,8 +26,29 @@ export interface DeviceDescriptor {
   name: string;
 }
 
+/**
+ * Why a scan reports progress at all: a BLE radio is not ready the instant an
+ * app asks it for something. CoreBluetooth starts in `unknown` and takes a
+ * moment to reach `poweredOn`; Android can be mid-toggle. A scan started
+ * before then fails immediately, and the caller has no way to tell that apart
+ * from "the board isn't here" unless the transport says so.
+ */
+export type ScanStatus =
+  /** Radio isn't usable yet (or at all). `message` is rider-facing. */
+  | { state: 'waiting'; message: string }
+  /** Radio is on and the scan is genuinely running. */
+  | { state: 'scanning' }
+  /** The scan itself failed and has stopped. */
+  | { state: 'failed'; message: string };
+
 export interface Transport {
-  scan(onFound: (device: DeviceDescriptor) => void): () => void;
+  /** Starts looking for boards. Returns a function that stops the scan.
+   * `onStatus` reports whether the scan is actually running yet — see
+   * ScanStatus. */
+  scan(
+    onFound: (device: DeviceDescriptor) => void,
+    onStatus?: (status: ScanStatus) => void,
+  ): () => void;
   connect(deviceId: string): Promise<void>;
   disconnect(): Promise<void>;
   getConnectionState(): ConnectionState;

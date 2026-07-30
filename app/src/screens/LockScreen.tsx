@@ -15,19 +15,17 @@
  * there is nothing to "read back" and display.
  */
 import React, { useEffect, useState } from 'react';
-import {
-  ScrollView,
-  StyleSheet,
-  Switch,
-  Text,
-  TextInput,
-  TouchableOpacity,
-  View,
-} from 'react-native';
+import { StyleSheet, Switch, Text, TouchableOpacity, View } from 'react-native';
 
 import { LOCK_METHOD } from '../protocol/constants';
 import type { MotoClient } from '../protocol/MotoClient';
 import { defaultLockConfig, type LockConfig } from '../protocol/types';
+import {
+  Input,
+  KeyboardAwareScroll,
+  NumberInput,
+  useLeaveGuard,
+} from '../ui/components';
 import { colors } from '../ui/theme';
 
 interface Props {
@@ -88,10 +86,18 @@ export function LockScreen({
   const [transferring, setTransferring] = useState(false);
   const [confirmTransfer, setConfirmTransfer] = useState(false);
 
+  /* Serialised copy of what the board last told us — see OutputsScreen. The
+   * cheat-code field is deliberately NOT part of this: it is write-only and
+   * has its own Set action, so an unsent code is not a config edit. */
+  const [baseline, setBaseline] = useState<string | null>(null);
+
   useEffect(() => {
     client
       .lockGetConfig()
-      .then(setConfig)
+      .then(c => {
+        setConfig(c);
+        setBaseline(JSON.stringify(c));
+      })
       .catch((err: unknown) =>
         setError(err instanceof Error ? err.message : String(err)),
       )
@@ -100,7 +106,9 @@ export function LockScreen({
 
   async function refreshConfig(): Promise<void> {
     try {
-      setConfig(await client.lockGetConfig());
+      const fresh = await client.lockGetConfig();
+      setConfig(fresh);
+      setBaseline(JSON.stringify(fresh));
     } catch {
       // Keep showing the last-known config; the error surfaces from
       // whichever action triggered this refresh instead.
@@ -207,6 +215,9 @@ export function LockScreen({
     }
   }
 
+  const dirty = baseline !== null && JSON.stringify(config) !== baseline;
+  const back = useLeaveGuard(dirty, onDone);
+
   if (loading) {
     return (
       <View style={styles.center}>
@@ -227,10 +238,13 @@ export function LockScreen({
   }
 
   return (
-    <ScrollView style={styles.container} contentContainerStyle={styles.content}>
+    <KeyboardAwareScroll
+      style={styles.container}
+      contentContainerStyle={styles.content}
+    >
       <View style={styles.header}>
         <Text style={styles.title}>Lock / Immobilizer</Text>
-        <TouchableOpacity onPress={onDone}>
+        <TouchableOpacity onPress={back}>
           <Text style={styles.link}>Back</Text>
         </TouchableOpacity>
       </View>
@@ -299,31 +313,23 @@ export function LockScreen({
       <Text style={styles.sectionTitle}>Timing</Text>
       <View style={styles.row}>
         <Text style={styles.rowLabel}>Auto-lock grace (ms)</Text>
-        <TextInput
-          placeholderTextColor={colors.textFaint}
+        <NumberInput
           style={styles.numInput}
-          keyboardType="number-pad"
-          value={String(config.autoLockGraceMs)}
-          onChangeText={v =>
-            setConfig(prev => ({
-              ...prev,
-              autoLockGraceMs: parseInt(v, 10) || 0,
-            }))
+          value={config.autoLockGraceMs}
+          min={0}
+          onChangeValue={v =>
+            setConfig(prev => ({ ...prev, autoLockGraceMs: v }))
           }
         />
       </View>
       <View style={styles.row}>
         <Text style={styles.rowLabel}>Cheat-code entry window (ms)</Text>
-        <TextInput
-          placeholderTextColor={colors.textFaint}
+        <NumberInput
           style={styles.numInput}
-          keyboardType="number-pad"
-          value={String(config.cheatcodeWindowMs)}
-          onChangeText={v =>
-            setConfig(prev => ({
-              ...prev,
-              cheatcodeWindowMs: parseInt(v, 10) || 0,
-            }))
+          value={config.cheatcodeWindowMs}
+          min={0}
+          onChangeValue={v =>
+            setConfig(prev => ({ ...prev, cheatcodeWindowMs: v }))
           }
         />
       </View>
@@ -345,8 +351,7 @@ export function LockScreen({
              locked — this app never reads it back.`
           : 'Not set.'}
       </Text>
-      <TextInput
-        placeholderTextColor={colors.textFaint}
+      <Input
         style={styles.nameInput}
         value={codeText}
         onChangeText={setCodeText}
@@ -377,8 +382,7 @@ export function LockScreen({
       <Text style={styles.sectionTitle}>
         Test a candidate (practice — no side effects)
       </Text>
-      <TextInput
-        placeholderTextColor={colors.textFaint}
+      <Input
         style={styles.nameInput}
         value={testText}
         onChangeText={setTestText}
@@ -432,7 +436,7 @@ export function LockScreen({
           </View>
         </View>
       )}
-    </ScrollView>
+    </KeyboardAwareScroll>
   );
 }
 

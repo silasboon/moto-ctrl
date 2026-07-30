@@ -7,7 +7,8 @@
  * project to verify they'd link (see app/NATIVE_SETUP.md).
  */
 import React, { useCallback, useEffect, useState } from 'react';
-import { SafeAreaView, StatusBar, StyleSheet } from 'react-native';
+import { StatusBar, StyleSheet } from 'react-native';
+import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 
 import { colors } from './src/ui/theme';
 
@@ -38,7 +39,7 @@ interface Session {
   device: DeviceDescriptor;
 }
 
-function App(): React.JSX.Element {
+function AppContent(): React.JSX.Element {
   const [session, setSession] = useState<Session | null>(null);
   const [screen, setScreen] = useState<Screen>('dashboard');
   /* Surfaced on the pairing screen after an unexpected drop, so a board going
@@ -157,6 +158,22 @@ function App(): React.JSX.Element {
         />
       )}
     </SafeAreaView>
+  );
+}
+
+/**
+ * Safe-area insets come from react-native-safe-area-context, not RN core.
+ * Core's SafeAreaView is deprecated (and always was iOS-only — it did nothing
+ * on Android, which now matters: RN 0.86 targets Android 15's enforced
+ * edge-to-edge, so content would otherwise sit under the status and gesture
+ * bars). The provider must wrap everything that reads an inset, so it lives
+ * here rather than inside any one screen.
+ */
+function App(): React.JSX.Element {
+  return (
+    <SafeAreaProvider>
+      <AppContent />
+    </SafeAreaProvider>
   );
 }
 

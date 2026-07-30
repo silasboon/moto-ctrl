@@ -35,10 +35,12 @@ import {
   Field,
   Loading,
   Notice,
+  NumberField,
   Screen,
   SectionHeader,
   Select,
   ToggleRow,
+  useLeaveGuard,
 } from '../ui/components';
 import { colors, space, type } from '../ui/theme';
 
@@ -77,16 +79,26 @@ export function OutputsScreen({ client, onDone }: Props): React.JSX.Element {
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [expanded, setExpanded] = useState<number | null>(null);
+  /** What the board last told us, so leaving can tell edits from no edits.
+   * Serialised rather than kept as an object: the whole config is replaced on
+   * every keystroke, so reference equality says nothing. */
+  const [baseline, setBaseline] = useState<string | null>(null);
 
   useEffect(() => {
     client
       .configRead()
-      .then(setConfig)
+      .then(c => {
+        setConfig(c);
+        setBaseline(JSON.stringify(c));
+      })
       .catch((err: unknown) =>
         setError(err instanceof Error ? err.message : String(err)),
       )
       .finally(() => setLoading(false));
   }, [client]);
+
+  const dirty = config !== null && JSON.stringify(config) !== baseline;
+  const back = useLeaveGuard(dirty, onDone);
 
   function patchChannel(ch: number, patch: Partial<OutputChannelConfig>): void {
     setConfig(prev => {
@@ -135,8 +147,12 @@ export function OutputsScreen({ client, onDone }: Props): React.JSX.Element {
     setSaved(false);
     try {
       const result = await client.configWrite(config);
-      if (result.ok) setSaved(true);
-      else setError(`Device rejected the config: ${result.resultName}`);
+      if (result.ok) {
+        setSaved(true);
+        setBaseline(JSON.stringify(config));
+      } else {
+        setError(`Device rejected the config: ${result.resultName}`);
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -147,7 +163,7 @@ export function OutputsScreen({ client, onDone }: Props): React.JSX.Element {
   if (loading) return <Loading label="Reading configuration…" />;
   if (!config) {
     return (
-      <Screen title="Outputs" onBack={onDone}>
+      <Screen title="Outputs" onBack={back}>
         <Notice tone="danger">
           {error ?? 'Could not read the configuration from the device.'}
         </Notice>
@@ -158,17 +174,18 @@ export function OutputsScreen({ client, onDone }: Props): React.JSX.Element {
   return (
     <Screen
       title="Outputs"
-      onBack={onDone}
+      onBack={back}
       trailing={
         <Button
           label={saving ? 'Saving' : 'Save'}
           onPress={save}
           busy={saving}
+          tone={dirty ? 'primary' : 'secondary'}
         />
       }
     >
       {error && <Notice tone="danger">{error}</Notice>}
-      {saved && <Notice tone="on">Saved to the device.</Notice>}
+      {saved && !dirty && <Notice tone="on">Saved to the device.</Notice>}
 
       <SectionHeader hint="Name each channel and choose what it does. Tap one to open it.">
         Channels
@@ -244,18 +261,12 @@ export function OutputsScreen({ client, onDone }: Props): React.JSX.Element {
 
                 {(ch.behaviour === 'toggle' ||
                   ch.behaviour === 'momentary') && (
-                  <Field
+                  <NumberField
                     label="Brightness (%)"
-                    keyboardType="number-pad"
-                    value={String(ch.pwm_duty_pct)}
-                    onChangeText={v =>
-                      patchChannel(i, {
-                        pwm_duty_pct: Math.max(
-                          1,
-                          Math.min(100, parseInt(v, 10) || 1),
-                        ),
-                      })
-                    }
+                    value={ch.pwm_duty_pct}
+                    min={1}
+                    max={100}
+                    onChangeValue={v => patchChannel(i, { pwm_duty_pct: v })}
                     hint="100 is full brightness. Dimming is off by default — some LED lamps flicker under PWM."
                   />
                 )}
@@ -333,37 +344,25 @@ export function OutputsScreen({ client, onDone }: Props): React.JSX.Element {
 
       <SectionHeader>Timing</SectionHeader>
       <Card>
-        <Field
+        <NumberField
           label="Turn auto-cancel (ms)"
-          keyboardType="number-pad"
-          value={String(config.outputs.turn_auto_cancel_ms)}
-          onChangeText={v =>
-            patchOutputs({
-              turn_auto_cancel_ms: Math.max(0, parseInt(v, 10) || 0),
-            })
-          }
+          value={config.outputs.turn_auto_cancel_ms}
+          min={0}
+          onChangeValue={v => patchOutputs({ turn_auto_cancel_ms: v })}
           hint="0 never auto-cancels."
         />
-        <Field
+        <NumberField
           label="Blink period (ms)"
-          keyboardType="number-pad"
-          value={String(config.outputs.turn_flash_period_ms)}
-          onChangeText={v =>
-            patchOutputs({
-              turn_flash_period_ms: Math.max(1, parseInt(v, 10) || 1),
-            })
-          }
+          value={config.outputs.turn_flash_period_ms}
+          min={1}
+          onChangeValue={v => patchOutputs({ turn_flash_period_ms: v })}
           hint="One full on+off cycle, for every channel set to blink."
         />
-        <Field
+        <NumberField
           label="Flasher pulses"
-          keyboardType="number-pad"
-          value={String(config.outputs.brake_flash_pulse_count)}
-          onChangeText={v =>
-            patchOutputs({
-              brake_flash_pulse_count: Math.max(0, parseInt(v, 10) || 0),
-            })
-          }
+          value={config.outputs.brake_flash_pulse_count}
+          min={0}
+          onChangeValue={v => patchOutputs({ brake_flash_pulse_count: v })}
           hint="Attention pulses before a flasher channel goes solid. 0 for none."
         />
       </Card>

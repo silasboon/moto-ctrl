@@ -9,10 +9,8 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import {
   ActivityIndicator,
-  ScrollView,
   StyleSheet,
   Text,
-  TextInput,
   TouchableOpacity,
   View,
 } from 'react-native';
@@ -20,6 +18,7 @@ import {
 import { base64ToBytes } from '../protocol/frames';
 import type { MotoClient } from '../protocol/MotoClient';
 import type { EnrolledKey } from '../protocol/types';
+import { Input, KeyboardAwareScroll } from '../ui/components';
 import { colors } from '../ui/theme';
 
 interface Props {
@@ -96,7 +95,10 @@ export function KeysScreen({ client, onDone }: Props): React.JSX.Element {
   }
 
   return (
-    <ScrollView style={styles.container} contentContainerStyle={styles.content}>
+    <KeyboardAwareScroll
+      style={styles.container}
+      contentContainerStyle={styles.content}
+    >
       <View style={styles.header}>
         <Text style={styles.title}>Paired Keys</Text>
         <TouchableOpacity onPress={onDone}>
@@ -125,8 +127,7 @@ export function KeysScreen({ client, onDone }: Props): React.JSX.Element {
         On the other phone, open Pairing and copy its public key from the box at
         the bottom, then paste it here.
       </Text>
-      <TextInput
-        placeholderTextColor={colors.textFaint}
+      <Input
         style={styles.input}
         value={newPubkeyB64}
         onChangeText={setNewPubkeyB64}
@@ -134,8 +135,7 @@ export function KeysScreen({ client, onDone }: Props): React.JSX.Element {
         autoCapitalize="none"
         autoCorrect={false}
       />
-      <TextInput
-        placeholderTextColor={colors.textFaint}
+      <Input
         style={styles.input}
         value={newLabel}
         onChangeText={setNewLabel}
@@ -153,7 +153,7 @@ export function KeysScreen({ client, onDone }: Props): React.JSX.Element {
 
       {error && <Text style={styles.error}>{error}</Text>}
       {message && <Text style={styles.success}>{message}</Text>}
-    </ScrollView>
+    </KeyboardAwareScroll>
   );
 }
 

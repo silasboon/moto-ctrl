@@ -13,9 +13,15 @@
 import React from 'react';
 import {
   ActivityIndicator,
+  Alert,
+  BackHandler,
+  Keyboard,
+  KeyboardAvoidingView,
   Modal,
+  Platform,
   Pressable,
   ScrollView,
+  type ScrollViewProps,
   StyleSheet,
   Switch,
   Text,
@@ -35,6 +41,164 @@ import {
   space,
   type,
 } from './theme';
+
+/* --- keyboard handling ---
+ *
+ * React Native does NOT lift a focused TextInput clear of the keyboard on its
+ * own. ScrollView exposes a helper meant for it — see the comment on
+ * scrollResponderScrollNativeHandleToKeyboard in RN's ScrollView.js — but
+ * nothing calls it, and it is the wrong tool here anyway: it measures the
+ * keyboard in screen coordinates and the field in scroll-content
+ * coordinates, so it silently assumes the ScrollView starts at the top of the
+ * screen. Ours starts below a safe-area inset and a title row.
+ *
+ * So the reveal below measures instead of assuming: where the field actually
+ * is on screen right now, where the keyboard's top edge actually is, and
+ * scrolls by exactly the overlap.
+ *
+ * It runs on keyboardDidShow as well as on focus, and that ordering is the
+ * whole reason it lands the field fully in view. On first focus the keyboard
+ * is not up yet, so there are no keyboard metrics to measure against AND the
+ * viewport has not shrunk yet, so the scroll range needed to lift the last
+ * field simply does not exist — a scroll issued then gets clamped part-way,
+ * which reads as "it scrolls, but not far enough". By keyboardDidShow both
+ * are settled.
+ *
+ * The viewport shrinking is the other half: KeyboardAvoidingView on iOS,
+ * windowSoftInputMode=adjustResize on Android (already set in
+ * AndroidManifest.xml). Without it there is nowhere to scroll to.
+ *
+ * ⚠ The Android half is bench-unverified. This app targets SDK 36, where
+ * Android 15+ enforces edge-to-edge and stops honouring adjustResize
+ * directly; React Native re-applies it from the IME window insets instead, so
+ * the behaviour should be unchanged, but that has only been reasoned about
+ * here, not observed. If a field ends up behind the keyboard on an Android
+ * 15+ device, the fix is to let KeyboardAvoidingView run there too — but
+ * check first that it isn't double-counting against a viewport that already
+ * shrank. */
+
+const ScrollHostContext = React.createContext<
+  ((input: TextInput) => void) | null
+>(null);
+
+/** Gap left below a revealed field, so its hint text stays readable rather
+ * than sitting exactly on the keyboard's edge. */
+const KEYBOARD_REVEAL_GAP = 24;
+
+/** Wires a text input to the enclosing scroll host. Spread the returned
+ * `ref`/`onFocus` onto the TextInput. A field rendered outside any
+ * KeyboardAwareScroll (a Modal, a test renderer) simply does nothing. */
+function useKeyboardReveal(onFocusProp?: TextInputProps['onFocus']): {
+  ref: React.RefObject<TextInput | null>;
+  onFocus: NonNullable<TextInputProps['onFocus']>;
+} {
+  const reveal = React.useContext(ScrollHostContext);
+  const ref = React.useRef<TextInput | null>(null);
+
+  const onFocus = React.useCallback<NonNullable<TextInputProps['onFocus']>>(
+    event => {
+      onFocusProp?.(event);
+      if (reveal && ref.current) reveal(ref.current);
+    },
+    [reveal, onFocusProp],
+  );
+
+  return { ref, onFocus };
+}
+
+/** A ScrollView that keeps the focused field visible. Use this instead of a
+ * bare ScrollView for any screen that contains a text input. */
+export function KeyboardAwareScroll({
+  children,
+  onScroll,
+  contentContainerStyle,
+  ...props
+}: ScrollViewProps): React.JSX.Element {
+  const ref = React.useRef<ScrollView | null>(null);
+  /** Live scroll position — the reveal scrolls relative to it, and
+   * ScrollView has no way to read it back. */
+  const offset = React.useRef(0);
+  /** The field to keep visible, until the keyboard goes away again. */
+  const focused = React.useRef<TextInput | null>(null);
+
+  const revealFocused = React.useCallback(() => {
+    const scroll = ref.current;
+    const input = focused.current;
+    const keyboardTop = Keyboard.metrics()?.screenY;
+    /* No metrics yet means the keyboard is still coming up; the
+     * keyboardDidShow listener below will run this again once it is. */
+    if (!scroll || !input || keyboardTop === undefined) return;
+
+    input.measureInWindow((_x, y, _width, height) => {
+      if (!Number.isFinite(y) || !Number.isFinite(height)) return;
+      const overlap = y + height + KEYBOARD_REVEAL_GAP - keyboardTop;
+      if (overlap <= 0) return; // already clear of the keyboard
+      scroll.scrollTo({
+        y: Math.max(0, offset.current + overlap),
+        animated: true,
+      });
+    });
+  }, []);
+
+  const reveal = React.useCallback(
+    (input: TextInput) => {
+      focused.current = input;
+      /* Moving between fields with the keyboard already up: metrics exist and
+       * the viewport is already shrunk, so this lands immediately and no
+       * keyboard event follows to do it for us. */
+      revealFocused();
+    },
+    [revealFocused],
+  );
+
+  React.useEffect(() => {
+    const subs = [
+      Keyboard.addListener('keyboardDidShow', revealFocused),
+      /* Height changes under a focused field: predictive-text bar appearing,
+       * or switching to an emoji/third-party keyboard. */
+      Keyboard.addListener('keyboardDidChangeFrame', revealFocused),
+      Keyboard.addListener('keyboardDidHide', () => {
+        focused.current = null;
+      }),
+    ];
+    return () => subs.forEach(s => s.remove());
+  }, [revealFocused]);
+
+  return (
+    <ScrollHostContext.Provider value={reveal}>
+      {/* Android resizes the window itself (adjustResize), so padding here
+       * would double-count and leave a gap above the keyboard. */}
+      <KeyboardAvoidingView
+        style={styles.flexOne}
+        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+      >
+        <ScrollView
+          ref={ref}
+          keyboardShouldPersistTaps="handled"
+          keyboardDismissMode={
+            Platform.OS === 'ios' ? 'interactive' : 'on-drag'
+          }
+          scrollEventThrottle={16}
+          onScroll={event => {
+            offset.current = event.nativeEvent.contentOffset.y;
+            onScroll?.(event);
+          }}
+          /* Enforced last, so the bottom-most field can always be scrolled
+           * clear of the keyboard: the available scroll range runs out
+           * exactly at the content's bottom padding, so it has to exceed the
+           * gap the reveal wants to leave. */
+          contentContainerStyle={[
+            contentContainerStyle,
+            styles.keyboardScrollBody,
+          ]}
+          {...props}
+        >
+          {children}
+        </ScrollView>
+      </KeyboardAvoidingView>
+    </ScrollHostContext.Provider>
+  );
+}
 
 /* --- layout --- */
 
@@ -88,13 +252,12 @@ export function Screen({
   return (
     <View style={styles.screen}>
       {header}
-      <ScrollView
+      <KeyboardAwareScroll
         style={styles.screenScroll}
         contentContainerStyle={styles.screenBody}
-        keyboardShouldPersistTaps="handled"
       >
         {children}
-      </ScrollView>
+      </KeyboardAwareScroll>
     </View>
   );
 }
@@ -401,6 +564,7 @@ export function Field({
   hint,
   ...inputProps
 }: { label?: string; hint?: string } & TextInputProps): React.JSX.Element {
+  const reveal = useKeyboardReveal(inputProps.onFocus);
   return (
     <View style={styles.field}>
       {label && <Text style={styles.fieldLabel}>{label}</Text>}
@@ -408,6 +572,159 @@ export function Field({
         placeholderTextColor={colors.textFaint}
         accessibilityLabel={label}
         {...inputProps}
+        ref={reveal.ref}
+        onFocus={reveal.onFocus}
+        style={[styles.input, inputProps.style]}
+      />
+      {hint && <Text style={styles.caption}>{hint}</Text>}
+    </View>
+  );
+}
+
+/** Bare text input, for screens that lay out their own label rows. Same
+ * keyboard-reveal behaviour as Field, without the label/hint wrapper. */
+export function Input({
+  style,
+  ...inputProps
+}: TextInputProps): React.JSX.Element {
+  const reveal = useKeyboardReveal(inputProps.onFocus);
+  return (
+    <TextInput
+      placeholderTextColor={colors.textFaint}
+      {...inputProps}
+      ref={reveal.ref}
+      onFocus={reveal.onFocus}
+      style={style}
+    />
+  );
+}
+
+/* --- numeric entry ---
+ *
+ * A number field cannot be driven straight from its numeric value: doing that
+ * makes the field unclearable. Deleting the last digit produces "", which
+ * parses to NaN, falls back to 0 or a minimum, and is immediately re-rendered
+ * as a digit — so changing 1500 to 900 means selecting the text rather than
+ * backspacing, and backspacing at all feels broken.
+ *
+ * Instead the field keeps its own draft string while it is being edited, and
+ * only commits values that actually parse. An empty (or half-typed, e.g. "-"
+ * or ".") field commits nothing and leaves the last good value in the config.
+ * On blur the draft is dropped, so the display snaps back to the committed,
+ * clamped value — an abandoned empty field can never save a phantom 0. */
+
+interface NumericProps {
+  value: number;
+  onChangeValue: (value: number) => void;
+  /** Clamped on commit. Omitting `min` also permits a leading minus sign. */
+  min?: number;
+  max?: number;
+  /** Accept a decimal point. Integer-only otherwise. */
+  decimal?: boolean;
+}
+
+function useNumericDraft({
+  value,
+  onChangeValue,
+  min,
+  max,
+  decimal,
+}: NumericProps): Pick<
+  TextInputProps,
+  'value' | 'onChangeText' | 'onBlur' | 'keyboardType'
+> {
+  const [draft, setDraft] = React.useState<string | null>(null);
+  const signed = min === undefined || min < 0;
+
+  const onChangeText = (raw: string): void => {
+    /* Phone number-pads vary by locale and manufacturer; strip anything that
+     * can't belong rather than trusting keyboardType to have excluded it. */
+    let cleaned = raw.replace(decimal ? /[^0-9.-]/g : /[^0-9-]/g, '');
+    if (!signed) cleaned = cleaned.replace(/-/g, '');
+    else cleaned = cleaned.replace(/(?!^)-/g, '');
+    if (decimal) {
+      const firstDot = cleaned.indexOf('.');
+      if (firstDot >= 0) {
+        cleaned =
+          cleaned.slice(0, firstDot + 1) +
+          cleaned.slice(firstDot + 1).replace(/\./g, '');
+      }
+    }
+    setDraft(cleaned);
+
+    const parsed = decimal ? parseFloat(cleaned) : parseInt(cleaned, 10);
+    if (Number.isNaN(parsed)) return; // "", "-", "." — nothing to commit yet
+    let next = parsed;
+    if (min !== undefined) next = Math.max(min, next);
+    if (max !== undefined) next = Math.min(max, next);
+    onChangeValue(next);
+  };
+
+  return {
+    value: draft ?? String(value),
+    onChangeText,
+    onBlur: () => setDraft(null),
+    /* number-pad has no minus key, so a field that accepts one needs the
+     * fuller numeric pad. */
+    keyboardType: decimal || signed ? 'numeric' : 'number-pad',
+  };
+}
+
+/** Bare numeric TextInput, for screens that lay out their own label rows. */
+export function NumberInput({
+  value,
+  onChangeValue,
+  min,
+  max,
+  decimal,
+  style,
+  ...inputProps
+}: NumericProps &
+  Omit<
+    TextInputProps,
+    'value' | 'onChangeText' | 'onBlur' | 'keyboardType'
+  >): React.JSX.Element {
+  const numeric = useNumericDraft({ value, onChangeValue, min, max, decimal });
+  const reveal = useKeyboardReveal(inputProps.onFocus);
+  return (
+    <TextInput
+      placeholderTextColor={colors.textFaint}
+      {...inputProps}
+      {...numeric}
+      ref={reveal.ref}
+      onFocus={reveal.onFocus}
+      style={style}
+    />
+  );
+}
+
+/** Labelled numeric field, matching Field's look. */
+export function NumberField({
+  label,
+  hint,
+  value,
+  onChangeValue,
+  min,
+  max,
+  decimal,
+  ...inputProps
+}: { label?: string; hint?: string } & NumericProps &
+  Omit<
+    TextInputProps,
+    'value' | 'onChangeText' | 'onBlur' | 'keyboardType'
+  >): React.JSX.Element {
+  const numeric = useNumericDraft({ value, onChangeValue, min, max, decimal });
+  const reveal = useKeyboardReveal(inputProps.onFocus);
+  return (
+    <View style={styles.field}>
+      {label && <Text style={styles.fieldLabel}>{label}</Text>}
+      <TextInput
+        placeholderTextColor={colors.textFaint}
+        accessibilityLabel={label}
+        {...inputProps}
+        {...numeric}
+        ref={reveal.ref}
+        onFocus={reveal.onFocus}
         style={[styles.input, inputProps.style]}
       />
       {hint && <Text style={styles.caption}>{hint}</Text>}
@@ -499,6 +816,53 @@ export function EmptyState({
       {body && <Text style={[styles.caption, styles.emptyBody]}>{body}</Text>}
     </View>
   );
+}
+
+/* --- leaving a screen with unsaved edits ---
+ *
+ * Every config screen here is read-edit-save against the board: edits live in
+ * local state and only reach the device on Save. Walking back out of one threw
+ * the edits away silently, which is a bad trade on a screen where re-entering
+ * a pin mapping or a set of button bindings takes minutes.
+ *
+ * Two buttons only, deliberately. "Save and leave" reads well but the save is
+ * a round trip to the board that can fail or time out, and there is nowhere
+ * left to report that once the screen is gone. */
+
+/** Ask before discarding unsaved edits. Calls `onDiscard` only if confirmed. */
+export function confirmDiscard(onDiscard: () => void): void {
+  Alert.alert(
+    'Discard changes?',
+    'These edits have not been saved to the board.',
+    [
+      { text: 'Keep editing', style: 'cancel' },
+      { text: 'Discard', style: 'destructive', onPress: onDiscard },
+    ],
+    { cancelable: true },
+  );
+}
+
+/**
+ * Guards leaving a screen while `dirty`. Returns the handler to pass to
+ * `Screen`'s `onBack`, and also intercepts Android's hardware/gesture back —
+ * which otherwise bypasses the on-screen chevron entirely and, in this app,
+ * would drop straight out to the launcher.
+ */
+export function useLeaveGuard(dirty: boolean, onLeave: () => void): () => void {
+  const leave = React.useCallback(() => {
+    if (dirty) confirmDiscard(onLeave);
+    else onLeave();
+  }, [dirty, onLeave]);
+
+  React.useEffect(() => {
+    const sub = BackHandler.addEventListener('hardwareBackPress', () => {
+      leave();
+      return true; // handled — never let the OS pop the app off the stack
+    });
+    return () => sub.remove();
+  }, [leave]);
+
+  return leave;
 }
 
 export function Loading({ label }: { label?: string }): React.JSX.Element {
@@ -594,6 +958,10 @@ const badgeTones = {
 } as const;
 
 const styles = StyleSheet.create({
+  /* Must stay larger than KEYBOARD_REVEAL_GAP — see the comment where it's
+   * applied. */
+  keyboardScrollBody: { paddingBottom: space.xxl },
+
   screen: { flex: 1, backgroundColor: colors.bg },
   screenHeader: {
     flexDirection: 'row',

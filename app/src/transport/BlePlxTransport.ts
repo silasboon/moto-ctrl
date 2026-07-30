@@ -21,12 +21,18 @@ import {
   BleManager,
   type Characteristic,
   type Device,
+  State,
   type Subscription,
 } from 'react-native-ble-plx';
 
 import { CHANNEL_GATT, DEVICE_NAME, MC_CH } from '../protocol/constants';
 import { base64ToBytes, bytesToBase64 } from '../protocol/frames';
-import type { ConnectionState, DeviceDescriptor, Transport } from './Transport';
+import type {
+  ConnectionState,
+  DeviceDescriptor,
+  ScanStatus,
+  Transport,
+} from './Transport';
 
 const ALL_CHANNELS = [
   MC_CH.STATUS,
@@ -36,8 +42,37 @@ const ALL_CHANNELS = [
   MC_CH.OTA,
 ];
 
+/** Rider-facing explanation for every radio state that isn't PoweredOn. */
+function stateMessage(state: State): string {
+  switch (state) {
+    case State.PoweredOff:
+      return 'Bluetooth is off. Turn it on to find your board.';
+    case State.Unauthorized:
+      return 'MOTO-CTRL is not allowed to use Bluetooth. Enable it in system settings.';
+    case State.Unsupported:
+      return 'This phone has no Bluetooth LE radio.';
+    case State.Resetting:
+      return 'Bluetooth is restarting…';
+    default:
+      return 'Waiting for Bluetooth…';
+  }
+}
+
+/* One native manager for the whole app.
+ *
+ * Each BleManager is a separate CBCentralManager/BluetoothAdapter client with
+ * its own startup delay and its own view of which peripherals exist. Handing
+ * scanning and connecting their own instances — which is what a `new
+ * BlePlxTransport()` per screen action used to do — meant paying that startup
+ * race twice and connecting through a manager that had never seen the device
+ * the other one found. Shared, both happen against the same radio session.
+ *
+ * Still lazy: constructing it touches the native module immediately
+ * (permissions/radio state on a device; no native module at all under Jest),
+ * so it must not happen just because a module was imported. */
+let sharedManager: BleManager | null = null;
+
 export class BlePlxTransport implements Transport {
-  private _manager: BleManager | null = null;
   private device: Device | null = null;
   private state: ConnectionState = 'disconnected';
   private readonly stateListeners = new Set<(state: ConnectionState) => void>();
@@ -46,32 +81,81 @@ export class BlePlxTransport implements Transport {
   >();
   private readonly monitors: Subscription[] = [];
 
-  /** Lazy: constructing a BleManager touches the native BLE module
-   * immediately (permissions/radio state on a real device; crashes outright
-   * under Jest, which has none). Defer it to first actual use, so simply
-   * instantiating a BlePlxTransport — e.g. while a user is on SimTransport —
-   * has no side effects. */
   private get manager(): BleManager {
-    if (!this._manager) {
-      this._manager = new BleManager();
+    if (!sharedManager) {
+      sharedManager = new BleManager();
     }
-    return this._manager;
+    return sharedManager;
   }
 
-  scan(onFound: (device: DeviceDescriptor) => void): () => void {
-    this.manager.startDeviceScan(
-      null,
-      null,
-      (error: BleError | null, device: Device | null) => {
-        if (error || !device) {
-          return;
-        }
-        if (device.name === DEVICE_NAME) {
-          onFound({ id: device.id, name: device.name });
-        }
-      },
-    );
-    return () => this.manager.stopDeviceScan();
+  /**
+   * Scanning waits for the radio rather than assuming it.
+   *
+   * A scan started the moment the app opens used to find nothing: the manager
+   * had only just been constructed, the adapter was still reporting `Unknown`,
+   * startDeviceScan failed straight away, and the failure was swallowed by a
+   * callback that treated any error as "no device". The screen then sat
+   * "searching" for its whole timeout, and the retry a rider inevitably tapped
+   * worked instantly — by then the radio was up. So: subscribe to the adapter
+   * state first (emitCurrentState, so an already-on radio starts the scan on
+   * the spot) and only scan once it is actually PoweredOn.
+   */
+  scan(
+    onFound: (device: DeviceDescriptor) => void,
+    onStatus?: (status: ScanStatus) => void,
+  ): () => void {
+    let stopped = false;
+    let scanning = false;
+
+    const startNativeScan = (): void => {
+      if (stopped || scanning) return;
+      scanning = true;
+      onStatus?.({ state: 'scanning' });
+      this.manager.startDeviceScan(
+        null,
+        null,
+        (error: BleError | null, device: Device | null) => {
+          if (error) {
+            scanning = false;
+            onStatus?.({ state: 'failed', message: error.message });
+            return;
+          }
+          if (!device) return;
+          /* `name` is the GAP name; `localName` is what this particular
+           * advertisement carried. The board puts its complete name in the
+           * advertising payload, but which of the two ble-plx populates
+           * depends on the platform and on whether the peripheral has been
+           * seen before, so match either. */
+          if (device.name === DEVICE_NAME || device.localName === DEVICE_NAME) {
+            onFound({ id: device.id, name: DEVICE_NAME });
+          }
+        },
+      );
+    };
+
+    const stateSub: Subscription = this.manager.onStateChange(state => {
+      if (stopped) return;
+      if (state === State.PoweredOn) {
+        startNativeScan();
+        return;
+      }
+      /* Radio went away mid-scan (rider toggled Bluetooth, or airplane
+       * mode) — drop the scan and say why. */
+      if (scanning) {
+        scanning = false;
+        this.manager.stopDeviceScan();
+      }
+      onStatus?.({ state: 'waiting', message: stateMessage(state) });
+    }, true);
+
+    return () => {
+      stopped = true;
+      stateSub.remove();
+      if (scanning) {
+        scanning = false;
+        this.manager.stopDeviceScan();
+      }
+    };
   }
 
   async connect(deviceId: string): Promise<void> {

@@ -17,6 +17,7 @@
     "react-native": "0.86.0",
     "react-native-ble-plx": "3.5.1",
     "react-native-get-random-values": "2.0.0",
+    "react-native-safe-area-context": "^5.8.0",
     "text-encoding": "^0.7.0",
     "tweetnacl": "1.0.3"
   },
