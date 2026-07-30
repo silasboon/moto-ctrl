@@ -144,12 +144,36 @@ static int attach_channel_to_ledc(uint8_t channel)
     return slot;
 }
 
+/* Last state driven per channel, so the log below reports only transitions.
+ * Initialised false, matching the real pin state: output_hal_gpio_init()
+ * configures every output and the PROFET inputs sit low, so a channel that
+ * boots OFF has genuinely not changed and says nothing. */
+static bool s_last_driven[BOARD_OUTPUT_COUNT];
+
 static void output_hal_gpio_set(uint8_t channel, bool on, void *ctx)
 {
     (void)ctx;
     if (channel >= BOARD_OUTPUT_COUNT) {
         return;
     }
+
+    /* Bench visibility: log which channels the firmware actually drives, with
+     * the 1-based OUTn label and GPIO, so "the app says OUT8 but OUT12 lit up"
+     * can be settled from the monitor alone.
+     *
+     * EDGE-TRIGGERED, deliberately. mc_output_tick() re-applies every channel
+     * to the HAL every 10ms — that is how blink and flasher phases advance —
+     * so logging each write produced ~1200 lines/second of unchanging state
+     * and buried everything else. Only transitions are interesting, and at
+     * rest this is silent. A blinking indicator still logs twice per blink
+     * period, which is the point. */
+    if (on != s_last_driven[channel]) {
+        ESP_LOGI(TAG, "OUT%u (ch=%u, GPIO%d) -> %s",
+                 (unsigned)(channel + 1), channel, (int)s_out_pins[channel],
+                 on ? "ON" : "OFF");
+        s_last_driven[channel] = on;
+    }
+
     ledc_maps_init_once();
     if (s_ledc_channel_for_output[channel] >= 0) {
         /* This pin has been claimed by LEDC (dimming was used at least once

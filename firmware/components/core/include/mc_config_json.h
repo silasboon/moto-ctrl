@@ -13,9 +13,24 @@
 #include "mc_config.h"
 
 /* Upper bound on the JSON representation of a config, used to size staging
- * buffers. A full config (12 named channels + input bindings/combos)
- * serializes to well under this. */
-#define MC_CONFIG_JSON_MAX 4096
+ * buffers (including mc_session_t.cfg_write_buf, one per concurrent BLE
+ * session — so raising this costs RAM per session, not just once).
+ *
+ * Size at schema_version 4, measured (not estimated) by
+ * test_worst_case_config_fits_json_max() in sim/tests/test_config_json.c:
+ *   bare default config ...................  2146 bytes
+ *   worst case (12 named channels + 8 named
+ *   buttons + every press array full + 8
+ *   combos of 10 buttons x 4 actions) .....  3729 bytes
+ * That does still fit 4096, but with only ~370 bytes spare — one added field
+ * away from breaking a fully-configured board's ability to save its config.
+ * 6144 buys ~2.4KB of headroom instead. The cost is per concurrent session
+ * (3 x 2KB extra .bss), which is why this isn't simply set very large.
+ *
+ * That test asserts the worst case fits and prints the real number on
+ * failure, so this accounting cannot silently drift — but re-read it before
+ * raising MC_COMBO_MAX_DEFS or MC_ACTION_LIST_MAX. */
+#define MC_CONFIG_JSON_MAX 6144
 
 /* Serializes `cfg` to a newly heap-allocated NUL-terminated JSON string.
  * Caller frees with mc_config_json_free(). Returns NULL on allocation

@@ -14,30 +14,60 @@
  * optional and must never degrade BLE control of the board (AGENTS.md).
  */
 import React, { useCallback, useEffect, useState } from 'react';
-import { ActivityIndicator, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import {
+  ActivityIndicator,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TouchableOpacity,
+  View,
+} from 'react-native';
 
 import { OTA_STATE } from '../protocol/constants';
 import type { MotoClient } from '../protocol/MotoClient';
-import type { FirmwareBundle, OtaStatus, UpdateManifest } from '../protocol/types';
-import { downloadFirmwareBundle, fetchUpdateManifest, isNewerVersion } from '../update/updateCheck';
+import type {
+  FirmwareBundle,
+  OtaStatus,
+  UpdateManifest,
+} from '../protocol/types';
+import {
+  downloadFirmwareBundle,
+  fetchUpdateManifest,
+  isNewerVersion,
+} from '../update/updateCheck';
+import { colors } from '../ui/theme';
 
 interface Props {
   client: MotoClient;
   onDone: () => void;
 }
 
-type Phase = 'idle' | 'checking' | 'up-to-date' | 'available' | 'downloading' | 'uploading' | 'ready' | 'error';
+type Phase =
+  | 'idle'
+  | 'checking'
+  | 'up-to-date'
+  | 'available'
+  | 'downloading'
+  | 'uploading'
+  | 'ready'
+  | 'error';
 
 function currentVersionString(client: MotoClient): string {
   const status = client.getLastStatus();
   return status ? `${status.fwMajor}.${status.fwMinor}.${status.fwPatch}` : '?';
 }
 
-export function FirmwareUpdateScreen({ client, onDone }: Props): React.JSX.Element {
+export function FirmwareUpdateScreen({
+  client,
+  onDone,
+}: Props): React.JSX.Element {
   const [phase, setPhase] = useState<Phase>('idle');
   const [manifest, setManifest] = useState<UpdateManifest | null>(null);
   const [bundle, setBundle] = useState<FirmwareBundle | null>(null);
-  const [progress, setProgress] = useState<{ sent: number; total: number } | null>(null);
+  const [progress, setProgress] = useState<{
+    sent: number;
+    total: number;
+  } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [deviceOta, setDeviceOta] = useState<OtaStatus | null>(null);
   const [rebootBusy, setRebootBusy] = useState(false);
@@ -47,7 +77,7 @@ export function FirmwareUpdateScreen({ client, onDone }: Props): React.JSX.Eleme
   const refreshDeviceOta = useCallback(() => {
     client
       .otaStatus()
-      .then((s) => setDeviceOta(s))
+      .then(s => setDeviceOta(s))
       .catch(() => {});
   }, [client]);
 
@@ -61,7 +91,9 @@ export function FirmwareUpdateScreen({ client, onDone }: Props): React.JSX.Eleme
     try {
       const m = await fetchUpdateManifest();
       setManifest(m);
-      setPhase(isNewerVersion(currentVersion, m.version) ? 'available' : 'up-to-date');
+      setPhase(
+        isNewerVersion(currentVersion, m.version) ? 'available' : 'up-to-date',
+      );
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
       setPhase('error');
@@ -77,7 +109,9 @@ export function FirmwareUpdateScreen({ client, onDone }: Props): React.JSX.Eleme
       setBundle(b);
       setPhase('uploading');
       setProgress({ sent: 0, total: b.image.length });
-      const result = await client.uploadFirmware(b, (sent, total) => setProgress({ sent, total }));
+      const result = await client.uploadFirmware(b, (sent, total) =>
+        setProgress({ sent, total }),
+      );
       if (!result.ok) {
         setError(`Device rejected the update: ${result.resultName}`);
         setPhase('error');
@@ -97,7 +131,9 @@ export function FirmwareUpdateScreen({ client, onDone }: Props): React.JSX.Eleme
     try {
       const result = await client.otaReboot();
       if (!result.ok) {
-        setError(`Reboot refused: ${result.resultName} — the bike may be riding or the battery too low; try again once stopped.`);
+        setError(
+          `Reboot refused: ${result.resultName} — the bike may be riding or the battery too low; try again once stopped.`,
+        );
       }
       refreshDeviceOta();
     } catch (err) {
@@ -126,17 +162,25 @@ export function FirmwareUpdateScreen({ client, onDone }: Props): React.JSX.Eleme
 
       <Text style={styles.hint}>Current device firmware: {currentVersion}</Text>
 
-      {deviceOta && deviceOta.state === OTA_STATE.COMMITTED && phase === 'idle' && (
-        <View style={styles.banner}>
-          <Text style={styles.bannerText}>
-            A previously downloaded update is already staged on the device ({deviceOta.bytesReceived} bytes) and
-            ready to apply.
-          </Text>
-          <TouchableOpacity style={styles.button} onPress={applyNow} disabled={rebootBusy}>
-            <Text style={styles.buttonText}>{rebootBusy ? 'Working…' : 'Apply staged update now'}</Text>
-          </TouchableOpacity>
-        </View>
-      )}
+      {deviceOta &&
+        deviceOta.state === OTA_STATE.COMMITTED &&
+        phase === 'idle' && (
+          <View style={styles.banner}>
+            <Text style={styles.bannerText}>
+              A previously downloaded update is already staged on the device (
+              {deviceOta.bytesReceived} bytes) and ready to apply.
+            </Text>
+            <TouchableOpacity
+              style={styles.button}
+              onPress={applyNow}
+              disabled={rebootBusy}
+            >
+              <Text style={styles.buttonText}>
+                {rebootBusy ? 'Working…' : 'Apply staged update now'}
+              </Text>
+            </TouchableOpacity>
+          </View>
+        )}
 
       {(phase === 'idle' || phase === 'error' || phase === 'up-to-date') && (
         <TouchableOpacity style={styles.button} onPress={checkForUpdate}>
@@ -149,15 +193,25 @@ export function FirmwareUpdateScreen({ client, onDone }: Props): React.JSX.Eleme
           <Text style={styles.hint}>Checking…</Text>
         </View>
       )}
-      {phase === 'up-to-date' && <Text style={styles.hint}>You're up to date.</Text>}
-      {phase === 'error' && error && <Text style={styles.error}>Unable to check for updates: {error}</Text>}
+      {phase === 'up-to-date' && (
+        <Text style={styles.hint}>You're up to date.</Text>
+      )}
+      {phase === 'error' && error && (
+        <Text style={styles.error}>Unable to check for updates: {error}</Text>
+      )}
 
       {phase === 'available' && manifest && (
         <View style={styles.banner}>
-          <Text style={styles.bannerTitle}>Update available: {manifest.version}</Text>
-          {manifest.changelog ? <Text style={styles.hint}>{manifest.changelog}</Text> : null}
+          <Text style={styles.bannerTitle}>
+            Update available: {manifest.version}
+          </Text>
+          {manifest.changelog ? (
+            <Text style={styles.hint}>{manifest.changelog}</Text>
+          ) : null}
           <TouchableOpacity style={styles.button} onPress={downloadAndInstall}>
-            <Text style={styles.buttonText}>Download &amp; transfer to device</Text>
+            <Text style={styles.buttonText}>
+              Download &amp; transfer to device
+            </Text>
           </TouchableOpacity>
         </View>
       )}
@@ -172,10 +226,14 @@ export function FirmwareUpdateScreen({ client, onDone }: Props): React.JSX.Eleme
       {phase === 'uploading' && progress && (
         <View>
           <Text style={styles.hint}>
-            Transferring over Bluetooth: {progress.sent} / {progress.total} bytes (
+            Transferring over Bluetooth: {progress.sent} / {progress.total}{' '}
+            bytes (
             {Math.round((progress.sent / Math.max(1, progress.total)) * 100)}%)
           </Text>
-          <TouchableOpacity style={[styles.button, styles.dangerButton]} onPress={abort}>
+          <TouchableOpacity
+            style={[styles.button, styles.dangerButton]}
+            onPress={abort}
+          >
             <Text style={styles.buttonText}>Cancel</Text>
           </TouchableOpacity>
         </View>
@@ -183,15 +241,26 @@ export function FirmwareUpdateScreen({ client, onDone }: Props): React.JSX.Eleme
 
       {phase === 'ready' && bundle && (
         <View style={styles.banner}>
-          <Text style={styles.bannerTitle}>Transfer complete — ready to apply.</Text>
-          <Text style={styles.hint}>
-            The current firmware keeps running until you apply the update. You can do this now or wait until you're
-            done riding.
+          <Text style={styles.bannerTitle}>
+            Transfer complete — ready to apply.
           </Text>
-          <TouchableOpacity style={styles.button} onPress={applyNow} disabled={rebootBusy}>
-            <Text style={styles.buttonText}>{rebootBusy ? 'Working…' : 'Apply now (device will reboot)'}</Text>
+          <Text style={styles.hint}>
+            The current firmware keeps running until you apply the update. You
+            can do this now or wait until you're done riding.
+          </Text>
+          <TouchableOpacity
+            style={styles.button}
+            onPress={applyNow}
+            disabled={rebootBusy}
+          >
+            <Text style={styles.buttonText}>
+              {rebootBusy ? 'Working…' : 'Apply now (device will reboot)'}
+            </Text>
           </TouchableOpacity>
-          <TouchableOpacity style={[styles.button, styles.dangerButton]} onPress={abort}>
+          <TouchableOpacity
+            style={[styles.button, styles.dangerButton]}
+            onPress={abort}
+          >
             <Text style={styles.buttonText}>Discard staged update</Text>
           </TouchableOpacity>
         </View>
@@ -202,18 +271,33 @@ export function FirmwareUpdateScreen({ client, onDone }: Props): React.JSX.Eleme
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1 },
+  container: { flex: 1, backgroundColor: colors.bg },
   content: { padding: 16, gap: 10 },
-  header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-  title: { fontSize: 20, fontWeight: '700' },
-  link: { color: '#2563eb' },
-  hint: { fontSize: 12, color: '#666' },
+  header: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  title: { color: colors.text, fontSize: 20, fontWeight: '700' },
+  link: { color: colors.accent },
+  hint: { fontSize: 12, color: colors.textMuted },
   row: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  button: { padding: 12, borderRadius: 8, alignItems: 'center', backgroundColor: '#2563eb', marginTop: 8 },
-  dangerButton: { backgroundColor: '#b91c1c' },
-  buttonText: { color: 'white', fontWeight: '600' },
-  banner: { backgroundColor: '#f4f5f7', borderRadius: 8, padding: 12, gap: 4 },
-  bannerTitle: { fontWeight: '700' },
-  bannerText: { fontSize: 13 },
-  error: { color: '#b91c1c' },
+  button: {
+    padding: 12,
+    borderRadius: 8,
+    alignItems: 'center',
+    backgroundColor: colors.accent,
+    marginTop: 8,
+  },
+  dangerButton: { backgroundColor: colors.danger },
+  buttonText: { color: colors.textOnAccent, fontWeight: '600' },
+  banner: {
+    backgroundColor: colors.raised,
+    borderRadius: 8,
+    padding: 12,
+    gap: 4,
+  },
+  bannerTitle: { color: colors.text, fontWeight: '700' },
+  bannerText: { color: colors.text, fontSize: 13 },
+  error: { color: colors.danger },
 });

@@ -123,8 +123,9 @@
         <div class="buttons-grid" id="vbuttons"></div>
         <p class="hint">Press/hold/combo timing is evaluated by the real mc_input engine in the sim (10ms poll). Short
         presses feed the lock cheat-code buffer below when the bike is LOCKED, AND dispatch
-        whichever action is bound in the Config JSON's <code>inputs.short_press_action[button]</code> (1 = toggle
-        TURN_L, 2 = toggle TURN_R, 3 = hazard press) — both happen independently, the same button can do both. Hold
+        every action bound in the Config JSON's <code>inputs.short_press_action[button]</code>, which is a LIST
+        (1 = toggle TURN_L, 2 = toggle TURN_R, 3 = hazard press, 256 + N = toggle output N) — both happen
+        independently, the same button can do both. Hold
         (mousedown) also simulates a maintained switch for the ignition-switch input, or
         <code>outputs.brake_switch_input</code>. Generic combo matches (unrelated to the cheat-code) are still just
         logged — no action bound to them yet.</p>

@@ -10,21 +10,51 @@
  */
 import nacl from 'tweetnacl';
 
-import { DIAG_LEARN_ALL, EVENT_TYPE, MC_CH, MC_OP, MC_RESULT, OTA_STATE, OUTPUT_COUNT } from '../protocol/constants';
-import { concatBytes, f32le, i16le, u16le, u32le, utf8Encode } from '../protocol/frames';
+import {
+  DIAG_LEARN_ALL,
+  EVENT_TYPE,
+  MC_CH,
+  MC_OP,
+  MC_RESULT,
+  OTA_STATE,
+  OUTPUT_COUNT,
+} from '../protocol/constants';
+import {
+  concatBytes,
+  f32le,
+  i16le,
+  u16le,
+  u32le,
+  utf8Encode,
+} from '../protocol/frames';
 import { MotoClient } from '../protocol/MotoClient';
-import { defaultConfig, defaultDiagCalib, defaultDiagConfig } from '../protocol/types';
-import type { ConnectionState, DeviceDescriptor, Transport } from '../transport/Transport';
+import {
+  defaultConfig,
+  defaultDiagCalib,
+  defaultDiagConfig,
+} from '../protocol/types';
+import type {
+  ConnectionState,
+  DeviceDescriptor,
+  Transport,
+} from '../transport/Transport';
 
 type Emit = (payload: Uint8Array) => void;
-type Responder = (channel: number, opcode: number, body: Uint8Array, emit: Emit) => void | Promise<void>;
+type Responder = (
+  channel: number,
+  opcode: number,
+  body: Uint8Array,
+  emit: Emit,
+) => void | Promise<void>;
 
 class ScriptedTransport implements Transport {
   state: ConnectionState = 'disconnected';
   sentFrames: { channel: number; opcode: number; body: Uint8Array }[] = [];
   responder: Responder = () => {};
   private readonly stateListeners = new Set<(state: ConnectionState) => void>();
-  private readonly messageListeners = new Set<(channel: number, data: Uint8Array) => void>();
+  private readonly messageListeners = new Set<
+    (channel: number, data: Uint8Array) => void
+  >();
 
   scan(onFound: (device: DeviceDescriptor) => void): () => void {
     onFound({ id: 'fake', name: 'fake' });
@@ -45,7 +75,9 @@ class ScriptedTransport implements Transport {
     return this.state;
   }
 
-  onConnectionStateChange(listener: (state: ConnectionState) => void): () => void {
+  onConnectionStateChange(
+    listener: (state: ConnectionState) => void,
+  ): () => void {
     this.stateListeners.add(listener);
     return () => this.stateListeners.delete(listener);
   }
@@ -55,11 +87,28 @@ class ScriptedTransport implements Transport {
     return () => this.messageListeners.delete(listener);
   }
 
+  /** Simulates the link dropping without disconnect() being called — a board
+   * going out of range or losing power. */
+  dropConnection(): void {
+    this.state = 'disconnected';
+    for (const l of this.stateListeners) l('disconnected');
+  }
+
+  /** Pushes an unsolicited frame from the device, with no request behind it
+   * (INPUT_EVENT). */
+  emitOn(channel: number, payload: Uint8Array): void {
+    for (const l of this.messageListeners) l(channel, payload);
+  }
+
+  /** Hook fired inside send(), for simulating a link that drops mid-request. */
+  beforeSend: (() => void) | null = null;
+
   async send(channel: number, data: Uint8Array): Promise<void> {
+    this.beforeSend?.();
     const opcode = data[0]!;
     const body = data.subarray(1);
     this.sentFrames.push({ channel, opcode, body });
-    const emit: Emit = (payload) => {
+    const emit: Emit = payload => {
       for (const l of this.messageListeners) l(channel, payload);
     };
     await this.responder(channel, opcode, body, emit);
@@ -91,7 +140,9 @@ function statusBytes(
   const mask = overrides.outputStateMask ?? 0;
   b[10] = mask & 0xff;
   b[11] = (mask >> 8) & 0xff;
-  b[15] = (overrides.cheatcodeBackoff ? 0x01 : 0) | (overrides.lvCutoffActive ? 0x02 : 0);
+  b[15] =
+    (overrides.cheatcodeBackoff ? 0x01 : 0) |
+    (overrides.lvCutoffActive ? 0x02 : 0);
   return b;
 }
 
@@ -100,14 +151,22 @@ describe('MotoClient', () => {
   // stop it via disconnect(), or the Jest worker leaks a live timer.
   const activeClients: MotoClient[] = [];
   afterEach(async () => {
-    await Promise.all(activeClients.splice(0).map((c) => c.disconnect()));
+    await Promise.all(activeClients.splice(0).map(c => c.disconnect()));
   });
 
   test('getStatus parses the 16-byte status wire', async () => {
     const transport = new ScriptedTransport();
     transport.responder = (channel, opcode, _body, emit) => {
       if (channel === MC_CH.STATUS && opcode === MC_OP.STATUS_GET) {
-        emit(frame(MC_OP.STATUS, statusBytes({ batteryMv: 13200, outputStateMask: 0b0000_0000_0101 })));
+        emit(
+          frame(
+            MC_OP.STATUS,
+            statusBytes({
+              batteryMv: 13200,
+              outputStateMask: 0b0000_0000_0101,
+            }),
+          ),
+        );
       }
     };
     const client = new MotoClient(transport);
@@ -133,8 +192,20 @@ describe('MotoClient', () => {
         emit(frame(MC_OP.AUTH_CHALLENGE, nonce));
       } else if (opcode === MC_OP.AUTH_RESPONSE) {
         const message = concatBytes(utf8Encode('moto-ctrl-auth-v1'), nonce);
-        const valid = nacl.sign.detached.verify(message, body, keypair.publicKey);
-        emit(frame(MC_OP.AUTH_RESULT, new Uint8Array([valid ? MC_RESULT.OK : MC_RESULT.REJECTED, valid ? 3 : 0xff])));
+        const valid = nacl.sign.detached.verify(
+          message,
+          body,
+          keypair.publicKey,
+        );
+        emit(
+          frame(
+            MC_OP.AUTH_RESULT,
+            new Uint8Array([
+              valid ? MC_RESULT.OK : MC_RESULT.REJECTED,
+              valid ? 3 : 0xff,
+            ]),
+          ),
+        );
       }
     };
 
@@ -164,8 +235,17 @@ describe('MotoClient', () => {
         emit(frame(MC_OP.AUTH_CHALLENGE, nonce));
       } else if (opcode === MC_OP.AUTH_RESPONSE) {
         const message = concatBytes(utf8Encode('moto-ctrl-auth-v1'), nonce);
-        const valid = nacl.sign.detached.verify(message, body, enrolledKeypair.publicKey);
-        emit(frame(MC_OP.AUTH_RESULT, new Uint8Array([valid ? MC_RESULT.OK : MC_RESULT.REJECTED, 0xff])));
+        const valid = nacl.sign.detached.verify(
+          message,
+          body,
+          enrolledKeypair.publicKey,
+        );
+        emit(
+          frame(
+            MC_OP.AUTH_RESULT,
+            new Uint8Array([valid ? MC_RESULT.OK : MC_RESULT.REJECTED, 0xff]),
+          ),
+        );
       }
     };
     const client = new MotoClient(transport);
@@ -184,7 +264,12 @@ describe('MotoClient', () => {
         emit(frame(MC_OP.STATUS, statusBytes()));
       } else if (channel === MC_CH.COMMAND && opcode === MC_OP.SET_OUTPUT) {
         expect(Array.from(body)).toEqual([5, 1]);
-        emit(frame(MC_OP.COMMAND_RESULT, new Uint8Array([MC_OP.SET_OUTPUT, MC_RESULT.OK])));
+        emit(
+          frame(
+            MC_OP.COMMAND_RESULT,
+            new Uint8Array([MC_OP.SET_OUTPUT, MC_RESULT.OK]),
+          ),
+        );
       }
     };
     const client = new MotoClient(transport);
@@ -194,13 +279,173 @@ describe('MotoClient', () => {
     expect(result.ok).toBe(true);
   });
 
+  test('inputLearn sends the enable byte and reports the device result', async () => {
+    const transport = new ScriptedTransport();
+    transport.responder = (channel, opcode, body, emit) => {
+      if (channel === MC_CH.STATUS && opcode === MC_OP.STATUS_GET) {
+        emit(frame(MC_OP.STATUS, statusBytes()));
+      } else if (channel === MC_CH.COMMAND && opcode === MC_OP.INPUT_LEARN) {
+        expect(Array.from(body)).toEqual([1]);
+        emit(
+          frame(
+            MC_OP.COMMAND_RESULT,
+            new Uint8Array([MC_OP.INPUT_LEARN, MC_RESULT.OK]),
+          ),
+        );
+      }
+    };
+    const client = new MotoClient(transport);
+    activeClients.push(client);
+    await client.connect('fake');
+    const result = await client.inputLearn(true);
+    expect(result.ok).toBe(true);
+  });
+
+  test('onInputEvent decodes button, press type and chord suppression', async () => {
+    const transport = new ScriptedTransport();
+    transport.responder = (channel, opcode, _body, emit) => {
+      if (channel === MC_CH.STATUS && opcode === MC_OP.STATUS_GET) {
+        emit(frame(MC_OP.STATUS, statusBytes()));
+      }
+    };
+    const client = new MotoClient(transport);
+    activeClients.push(client);
+    await client.connect('fake');
+
+    const seen: unknown[] = [];
+    const unsub = client.onInputEvent(e => seen.push(e));
+
+    // press_type 0/1/2 = short/long/double; third byte is action_suppressed.
+    transport.emitOn(
+      MC_CH.COMMAND,
+      frame(MC_OP.INPUT_EVENT, new Uint8Array([4, 0, 0])),
+    );
+    transport.emitOn(
+      MC_CH.COMMAND,
+      frame(MC_OP.INPUT_EVENT, new Uint8Array([0, 1, 0])),
+    );
+    transport.emitOn(
+      MC_CH.COMMAND,
+      frame(MC_OP.INPUT_EVENT, new Uint8Array([7, 2, 1])),
+    );
+
+    expect(seen).toEqual([
+      { button: 4, pressType: 'short', actionSuppressed: false },
+      { button: 0, pressType: 'long', actionSuppressed: false },
+      { button: 7, pressType: 'double', actionSuppressed: true },
+    ]);
+
+    unsub();
+    transport.emitOn(
+      MC_CH.COMMAND,
+      frame(MC_OP.INPUT_EVENT, new Uint8Array([1, 0, 0])),
+    );
+    expect(seen).toHaveLength(3);
+  });
+
+  /* INPUT_EVENT is unsolicited and shares the COMMAND channel, so it can
+   * land between a request and its reply. It must not satisfy the pending
+   * waiter — otherwise setOutput() would parse a button press as its
+   * COMMAND_RESULT and report a bogus result code. */
+  test('an unsolicited INPUT_EVENT does not resolve an in-flight command reply', async () => {
+    const transport = new ScriptedTransport();
+    transport.responder = (channel, opcode, _body, emit) => {
+      if (channel === MC_CH.STATUS && opcode === MC_OP.STATUS_GET) {
+        emit(frame(MC_OP.STATUS, statusBytes()));
+      } else if (channel === MC_CH.COMMAND && opcode === MC_OP.SET_OUTPUT) {
+        /* A press arrives first, then the real reply. press_type is
+         * deliberately 1 (long), so the event's byte 1 is 1 — i.e.
+         * UNAUTHENTICATED if it were ever misread as a COMMAND_RESULT. With
+         * press_type 0 those bytes would coincidentally decode as OK and this
+         * test would pass even with the routing bug present. */
+        emit(frame(MC_OP.INPUT_EVENT, new Uint8Array([3, 1, 0])));
+        emit(
+          frame(
+            MC_OP.COMMAND_RESULT,
+            new Uint8Array([MC_OP.SET_OUTPUT, MC_RESULT.OK]),
+          ),
+        );
+      }
+    };
+    const client = new MotoClient(transport);
+    activeClients.push(client);
+    await client.connect('fake');
+
+    const events: unknown[] = [];
+    client.onInputEvent(e => events.push(e));
+
+    const result = await client.setOutput(3, true);
+    expect(result.ok).toBe(true);
+    expect(result.result).toBe(MC_RESULT.OK);
+    expect(events).toEqual([
+      { button: 3, pressType: 'long', actionSuppressed: false },
+    ]);
+  });
+
+  /* A board going out of range must fail in-flight work immediately and by
+   * name. Previously each request sat armed for the full REPLY_TIMEOUT_MS and
+   * then rejected with a bare "timed out", which reads as a protocol fault and
+   * — if the screen had moved on — landed as an unhandled rejection seconds
+   * after the event. */
+  test('an unexpected disconnect rejects in-flight requests immediately', async () => {
+    const transport = new ScriptedTransport();
+    transport.responder = (channel, opcode, _body, emit) => {
+      if (channel === MC_CH.STATUS && opcode === MC_OP.STATUS_GET) {
+        emit(frame(MC_OP.STATUS, statusBytes()));
+      }
+      // COMMAND deliberately never answers, standing in for a board that
+      // vanished mid-request.
+    };
+    const client = new MotoClient(transport);
+    activeClients.push(client);
+    await client.connect('fake');
+
+    const pending = client.setOutput(1, true);
+    transport.dropConnection();
+
+    await expect(pending).rejects.toThrow(/disconnected/i);
+    expect(client.isAuthenticated()).toBe(false);
+  });
+
+  /* The exact race that produced an unhandled rejection on a real board:
+   * request() creates the reply waiter, then awaits send(). A disconnect
+   * landing inside that await rejects a promise that has no handler yet,
+   * because the caller only awaits it a microtask later. waitForReply()
+   * attaches a no-op catch at creation to close the gap — the caller still
+   * receives the rejection, as this asserts. */
+  test('a disconnect during send still rejects the caller, not the runtime', async () => {
+    const transport = new ScriptedTransport();
+    transport.responder = (channel, opcode, _body, emit) => {
+      if (channel === MC_CH.STATUS && opcode === MC_OP.STATUS_GET) {
+        emit(frame(MC_OP.STATUS, statusBytes()));
+      }
+    };
+    const client = new MotoClient(transport);
+    activeClients.push(client);
+    await client.connect('fake');
+
+    // Drop the link from inside send(), i.e. while request() is awaiting it
+    // and before it has returned the waiter to its caller.
+    transport.beforeSend = () => transport.dropConnection();
+
+    await expect(client.setOutput(2, true)).rejects.toThrow(/disconnected/i);
+  });
+
   test('configRead reassembles out-of-order chunks by offset', async () => {
     const transport = new ScriptedTransport();
     const json = JSON.stringify(defaultConfig());
     const bytes = utf8Encode(json);
     const mid = Math.floor(bytes.length / 2);
-    const chunkA = concatBytes(u16le(0), u16le(bytes.length), bytes.subarray(0, mid));
-    const chunkB = concatBytes(u16le(mid), u16le(bytes.length), bytes.subarray(mid));
+    const chunkA = concatBytes(
+      u16le(0),
+      u16le(bytes.length),
+      bytes.subarray(0, mid),
+    );
+    const chunkB = concatBytes(
+      u16le(mid),
+      u16le(bytes.length),
+      bytes.subarray(mid),
+    );
     transport.responder = (channel, opcode, _body, emit) => {
       if (channel === MC_CH.STATUS && opcode === MC_OP.STATUS_GET) {
         emit(frame(MC_OP.STATUS, statusBytes()));
@@ -275,7 +520,12 @@ describe('MotoClient', () => {
     const transport = new ScriptedTransport();
     transport.responder = (channel, opcode, _body, emit) => {
       if (channel === MC_CH.STATUS && opcode === MC_OP.STATUS_GET) {
-        emit(frame(MC_OP.STATUS, statusBytes({ lockState: 2, cheatcodeBackoff: true })));
+        emit(
+          frame(
+            MC_OP.STATUS,
+            statusBytes({ lockState: 2, cheatcodeBackoff: true }),
+          ),
+        );
       }
     };
     const client = new MotoClient(transport);
@@ -292,9 +542,19 @@ describe('MotoClient', () => {
       if (channel === MC_CH.STATUS && opcode === MC_OP.STATUS_GET) {
         emit(frame(MC_OP.STATUS, statusBytes()));
       } else if (channel === MC_CH.COMMAND && opcode === MC_OP.LOCK) {
-        emit(frame(MC_OP.COMMAND_RESULT, new Uint8Array([MC_OP.LOCK, MC_RESULT.OK])));
+        emit(
+          frame(
+            MC_OP.COMMAND_RESULT,
+            new Uint8Array([MC_OP.LOCK, MC_RESULT.OK]),
+          ),
+        );
       } else if (channel === MC_CH.COMMAND && opcode === MC_OP.UNLOCK) {
-        emit(frame(MC_OP.COMMAND_RESULT, new Uint8Array([MC_OP.UNLOCK, MC_RESULT.REJECTED])));
+        emit(
+          frame(
+            MC_OP.COMMAND_RESULT,
+            new Uint8Array([MC_OP.UNLOCK, MC_RESULT.REJECTED]),
+          ),
+        );
       }
     };
     const client = new MotoClient(transport);
@@ -311,19 +571,34 @@ describe('MotoClient', () => {
     transport.responder = (channel, opcode, body, emit) => {
       if (channel === MC_CH.STATUS && opcode === MC_OP.STATUS_GET) {
         emit(frame(MC_OP.STATUS, statusBytes()));
-      } else if (channel === MC_CH.COMMAND && opcode === MC_OP.LOCK_GET_CONFIG) {
+      } else if (
+        channel === MC_CH.COMMAND &&
+        opcode === MC_OP.LOCK_GET_CONFIG
+      ) {
         const resp = new Uint8Array(9);
         resp[0] = 1; // enabled
         resp[1] = 0x03; // PHONE | IGNITION_SWITCH
         resp[2] = 0xff; // no ignition-switch input
-        resp[3] = 0x60; resp[4] = 0xea; // 60000
-        resp[5] = 0x88; resp[6] = 0x13; // 5000
+        resp[3] = 0x60;
+        resp[4] = 0xea; // 60000
+        resp[5] = 0x88;
+        resp[6] = 0x13; // 5000
         resp[7] = 1; // cheatcode_set
         resp[8] = 6; // cheatcode_len
         emit(frame(MC_OP.LOCK_CONFIG, resp));
-      } else if (channel === MC_CH.COMMAND && opcode === MC_OP.LOCK_SET_CONFIG) {
-        expect(Array.from(body)).toEqual([1, 0x01, 0xff, 0x60, 0xea, 0x88, 0x13]);
-        emit(frame(MC_OP.COMMAND_RESULT, new Uint8Array([MC_OP.LOCK_SET_CONFIG, MC_RESULT.OK])));
+      } else if (
+        channel === MC_CH.COMMAND &&
+        opcode === MC_OP.LOCK_SET_CONFIG
+      ) {
+        expect(Array.from(body)).toEqual([
+          1, 0x01, 0xff, 0x60, 0xea, 0x88, 0x13,
+        ]);
+        emit(
+          frame(
+            MC_OP.COMMAND_RESULT,
+            new Uint8Array([MC_OP.LOCK_SET_CONFIG, MC_RESULT.OK]),
+          ),
+        );
       }
     };
     const client = new MotoClient(transport);
@@ -358,12 +633,27 @@ describe('MotoClient', () => {
         emit(frame(MC_OP.STATUS, statusBytes()));
       } else if (channel === MC_CH.COMMAND && opcode === MC_OP.CHEATCODE_SET) {
         expect(Array.from(body)).toEqual([4, 0, 1, 2, 3]);
-        emit(frame(MC_OP.COMMAND_RESULT, new Uint8Array([MC_OP.CHEATCODE_SET, MC_RESULT.OK])));
-      } else if (channel === MC_CH.COMMAND && opcode === MC_OP.CHEATCODE_CLEAR) {
-        emit(frame(MC_OP.COMMAND_RESULT, new Uint8Array([MC_OP.CHEATCODE_CLEAR, MC_RESULT.REJECTED])));
+        emit(
+          frame(
+            MC_OP.COMMAND_RESULT,
+            new Uint8Array([MC_OP.CHEATCODE_SET, MC_RESULT.OK]),
+          ),
+        );
+      } else if (
+        channel === MC_CH.COMMAND &&
+        opcode === MC_OP.CHEATCODE_CLEAR
+      ) {
+        emit(
+          frame(
+            MC_OP.COMMAND_RESULT,
+            new Uint8Array([MC_OP.CHEATCODE_CLEAR, MC_RESULT.REJECTED]),
+          ),
+        );
       } else if (channel === MC_CH.COMMAND && opcode === MC_OP.CHEATCODE_TEST) {
         expect(Array.from(body)).toEqual([4, 0, 1, 2, 3]);
-        emit(frame(MC_OP.CHEATCODE_TEST_RESULT, new Uint8Array([MC_RESULT.OK, 1])));
+        emit(
+          frame(MC_OP.CHEATCODE_TEST_RESULT, new Uint8Array([MC_RESULT.OK, 1])),
+        );
       }
     };
     const client = new MotoClient(transport);
@@ -382,8 +672,16 @@ describe('MotoClient', () => {
     transport.responder = (channel, opcode, _body, emit) => {
       if (channel === MC_CH.STATUS && opcode === MC_OP.STATUS_GET) {
         emit(frame(MC_OP.STATUS, statusBytes()));
-      } else if (channel === MC_CH.COMMAND && opcode === MC_OP.TRANSFER_OWNERSHIP) {
-        emit(frame(MC_OP.COMMAND_RESULT, new Uint8Array([MC_OP.TRANSFER_OWNERSHIP, MC_RESULT.OK])));
+      } else if (
+        channel === MC_CH.COMMAND &&
+        opcode === MC_OP.TRANSFER_OWNERSHIP
+      ) {
+        emit(
+          frame(
+            MC_OP.COMMAND_RESULT,
+            new Uint8Array([MC_OP.TRANSFER_OWNERSHIP, MC_RESULT.OK]),
+          ),
+        );
       }
     };
     const client = new MotoClient(transport);
@@ -399,7 +697,12 @@ describe('MotoClient', () => {
     const transport = new ScriptedTransport();
     transport.responder = (channel, opcode, _body, emit) => {
       if (channel === MC_CH.STATUS && opcode === MC_OP.STATUS_GET) {
-        emit(frame(MC_OP.STATUS, statusBytes({ batteryMv: 11500, lvCutoffActive: true })));
+        emit(
+          frame(
+            MC_OP.STATUS,
+            statusBytes({ batteryMv: 11500, lvCutoffActive: true }),
+          ),
+        );
       }
     };
     const client = new MotoClient(transport);
@@ -438,24 +741,42 @@ describe('MotoClient', () => {
     transport.responder = (channel, opcode, body, emit) => {
       if (channel === MC_CH.STATUS && opcode === MC_OP.STATUS_GET) {
         emit(frame(MC_OP.STATUS, statusBytes()));
-      } else if (channel === MC_CH.COMMAND && opcode === MC_OP.DIAG_GET_CONFIG) {
+      } else if (
+        channel === MC_CH.COMMAND &&
+        opcode === MC_OP.DIAG_GET_CONFIG
+      ) {
         const resp = new Uint8Array(1 + OUTPUT_COUNT * 4 + 8);
         resp[0] = MC_RESULT.OK;
         let pos = 1;
         for (let c = 0; c < OUTPUT_COUNT; c++) {
-          resp.set(u16le(50), pos); pos += 2;
-          resp.set(u16le(15000), pos); pos += 2;
+          resp.set(u16le(50), pos);
+          pos += 2;
+          resp.set(u16le(15000), pos);
+          pos += 2;
         }
-        resp.set(u16le(11800), pos); pos += 2;
-        resp.set(u16le(300), pos); pos += 2;
-        resp.set(u16le(13800), pos); pos += 2;
+        resp.set(u16le(11800), pos);
+        pos += 2;
+        resp.set(u16le(300), pos);
+        pos += 2;
+        resp.set(u16le(13800), pos);
+        pos += 2;
         resp.set(u16le(300), pos);
         emit(frame(MC_OP.DIAG_CONFIG, resp));
-      } else if (channel === MC_CH.COMMAND && opcode === MC_OP.DIAG_SET_CONFIG) {
+      } else if (
+        channel === MC_CH.COMMAND &&
+        opcode === MC_OP.DIAG_SET_CONFIG
+      ) {
         expect(body.length).toBe(OUTPUT_COUNT * 4 + 8);
         // First channel's open_load_ma/overcurrent_ma, and the trailing cutoff word.
-        expect(Array.from(body.subarray(0, 4))).toEqual([0x64, 0x00, 0x88, 0x13]); // 100, 5000
-        emit(frame(MC_OP.COMMAND_RESULT, new Uint8Array([MC_OP.DIAG_SET_CONFIG, MC_RESULT.OK])));
+        expect(Array.from(body.subarray(0, 4))).toEqual([
+          0x64, 0x00, 0x88, 0x13,
+        ]); // 100, 5000
+        emit(
+          frame(
+            MC_OP.COMMAND_RESULT,
+            new Uint8Array([MC_OP.DIAG_SET_CONFIG, MC_RESULT.OK]),
+          ),
+        );
       }
     };
     const client = new MotoClient(transport);
@@ -493,7 +814,12 @@ describe('MotoClient', () => {
         emit(frame(MC_OP.DIAG_CALIB, resp));
       } else if (channel === MC_CH.COMMAND && opcode === MC_OP.DIAG_SET_CALIB) {
         expect(body.length).toBe(16);
-        emit(frame(MC_OP.COMMAND_RESULT, new Uint8Array([MC_OP.DIAG_SET_CALIB, MC_RESULT.OK])));
+        emit(
+          frame(
+            MC_OP.COMMAND_RESULT,
+            new Uint8Array([MC_OP.DIAG_SET_CALIB, MC_RESULT.OK]),
+          ),
+        );
       }
     };
     const client = new MotoClient(transport);
@@ -520,7 +846,12 @@ describe('MotoClient', () => {
       } else if (channel === MC_CH.COMMAND && opcode === MC_OP.DIAG_LEARN) {
         seenChannels.push(body[0]!);
         const result = body[0] === 9 ? MC_RESULT.REJECTED : MC_RESULT.OK;
-        emit(frame(MC_OP.COMMAND_RESULT, new Uint8Array([MC_OP.DIAG_LEARN, result])));
+        emit(
+          frame(
+            MC_OP.COMMAND_RESULT,
+            new Uint8Array([MC_OP.DIAG_LEARN, result]),
+          ),
+        );
       }
     };
     const client = new MotoClient(transport);
@@ -542,7 +873,12 @@ describe('MotoClient', () => {
       } else if (channel === MC_CH.COMMAND && opcode === MC_OP.HAZARD_PRESS) {
         sawHazardPress = true;
         expect(body.length).toBe(0);
-        emit(frame(MC_OP.COMMAND_RESULT, new Uint8Array([MC_OP.HAZARD_PRESS, MC_RESULT.OK])));
+        emit(
+          frame(
+            MC_OP.COMMAND_RESULT,
+            new Uint8Array([MC_OP.HAZARD_PRESS, MC_RESULT.OK]),
+          ),
+        );
       }
     };
     const client = new MotoClient(transport);
@@ -560,7 +896,12 @@ describe('MotoClient', () => {
       if (channel === MC_CH.STATUS && opcode === MC_OP.STATUS_GET) {
         emit(frame(MC_OP.STATUS, statusBytes()));
       } else if (channel === MC_CH.COMMAND && opcode === MC_OP.HAZARD_PRESS) {
-        emit(frame(MC_OP.COMMAND_RESULT, new Uint8Array([MC_OP.HAZARD_PRESS, MC_RESULT.REJECTED])));
+        emit(
+          frame(
+            MC_OP.COMMAND_RESULT,
+            new Uint8Array([MC_OP.HAZARD_PRESS, MC_RESULT.REJECTED]),
+          ),
+        );
       }
     };
     const client = new MotoClient(transport);
@@ -591,7 +932,9 @@ describe('MotoClient', () => {
         seenBeginPayload = body;
         emit(frame(MC_OP.OTA_RESULT, new Uint8Array([MC_RESULT.OK])));
       } else if (opcode === MC_OP.OTA_CHUNK) {
-        seenChunkOffsets.push(body[0]! | (body[1]! << 8) | (body[2]! << 16) | (body[3]! << 24));
+        seenChunkOffsets.push(
+          body[0]! | (body[1]! << 8) | (body[2]! << 16) | (body[3]! << 24),
+        );
         emit(frame(MC_OP.OTA_RESULT, new Uint8Array([MC_RESULT.OK])));
       } else if (opcode === MC_OP.OTA_COMMIT) {
         emit(frame(MC_OP.OTA_RESULT, new Uint8Array([MC_RESULT.OK])));
@@ -610,9 +953,15 @@ describe('MotoClient', () => {
 
     expect(result.ok).toBe(true);
     expect(seenBeginPayload).not.toBeNull();
-    expect(Array.from(seenBeginPayload!.subarray(0, 4))).toEqual(Array.from(u32le(image.length)));
-    expect(Array.from(seenBeginPayload!.subarray(4, 68))).toEqual(Array.from(sha512));
-    expect(Array.from(seenBeginPayload!.subarray(68, 132))).toEqual(Array.from(signature));
+    expect(Array.from(seenBeginPayload!.subarray(0, 4))).toEqual(
+      Array.from(u32le(image.length)),
+    );
+    expect(Array.from(seenBeginPayload!.subarray(4, 68))).toEqual(
+      Array.from(sha512),
+    );
+    expect(Array.from(seenBeginPayload!.subarray(68, 132))).toEqual(
+      Array.from(signature),
+    );
     // 300 bytes at OTA_CHUNK_BYTES=500 fits in a single chunk at offset 0.
     expect(seenChunkOffsets).toEqual([0]);
     expect(progress).toEqual([[300, 300]]);
@@ -665,7 +1014,11 @@ describe('MotoClient', () => {
       if (channel === MC_CH.STATUS && opcode === MC_OP.STATUS_GET) {
         emit(frame(MC_OP.STATUS, statusBytes()));
       } else if (channel === MC_CH.OTA && opcode === MC_OP.OTA_STATUS) {
-        const resp = concatBytes(new Uint8Array([MC_RESULT.OK, OTA_STATE.COMMITTED]), u32le(2048), u32le(2048));
+        const resp = concatBytes(
+          new Uint8Array([MC_RESULT.OK, OTA_STATE.COMMITTED]),
+          u32le(2048),
+          u32le(2048),
+        );
         emit(frame(MC_OP.OTA_STATUS_RESULT, resp));
       }
     };
@@ -706,8 +1059,17 @@ describe('MotoClient', () => {
 
   test('getEventLog reassembles multiple EVENT_LOG_CHUNK frames into ordered records', async () => {
     const transport = new ScriptedTransport();
-    const record = (seq: number, uptimeMs: number, type: number, arg0: number) =>
-      concatBytes(u32le(seq), u32le(uptimeMs), new Uint8Array([type, arg0, 0, 0]));
+    const record = (
+      seq: number,
+      uptimeMs: number,
+      type: number,
+      arg0: number,
+    ) =>
+      concatBytes(
+        u32le(seq),
+        u32le(uptimeMs),
+        new Uint8Array([type, arg0, 0, 0]),
+      );
 
     transport.responder = (channel, opcode, body, emit) => {
       if (channel === MC_CH.STATUS && opcode === MC_OP.STATUS_GET) {
@@ -724,7 +1086,12 @@ describe('MotoClient', () => {
         record(1, 100, EVENT_TYPE.KEY_ENROLLED, 0),
         record(2, 200, EVENT_TYPE.LOCK_ENGAGED, 0),
       );
-      const chunk2 = concatBytes(u16le(2), u16le(3), new Uint8Array([1]), record(3, 300, EVENT_TYPE.KEY_REVOKED, 0));
+      const chunk2 = concatBytes(
+        u16le(2),
+        u16le(3),
+        new Uint8Array([1]),
+        record(3, 300, EVENT_TYPE.KEY_REVOKED, 0),
+      );
       emit(frame(MC_OP.EVENT_LOG_CHUNK, chunk1));
       emit(frame(MC_OP.EVENT_LOG_CHUNK, chunk2));
     };
@@ -735,8 +1102,20 @@ describe('MotoClient', () => {
 
     const records = await client.getEventLog(0);
     expect(records).toEqual([
-      { seq: 1, uptimeMs: 100, type: EVENT_TYPE.KEY_ENROLLED, arg0: 0, arg1: 0 },
-      { seq: 2, uptimeMs: 200, type: EVENT_TYPE.LOCK_ENGAGED, arg0: 0, arg1: 0 },
+      {
+        seq: 1,
+        uptimeMs: 100,
+        type: EVENT_TYPE.KEY_ENROLLED,
+        arg0: 0,
+        arg1: 0,
+      },
+      {
+        seq: 2,
+        uptimeMs: 200,
+        type: EVENT_TYPE.LOCK_ENGAGED,
+        arg0: 0,
+        arg1: 0,
+      },
       { seq: 3, uptimeMs: 300, type: EVENT_TYPE.KEY_REVOKED, arg0: 0, arg1: 0 },
     ]);
   });

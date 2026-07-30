@@ -6,11 +6,22 @@
  * edit it from the app, by design (see mc_event_log.h).
  */
 import React, { useCallback, useEffect, useState } from 'react';
-import { FlatList, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import {
+  FlatList,
+  StyleSheet,
+  Text,
+  TouchableOpacity,
+  View,
+} from 'react-native';
 
-import { EVENT_UNLOCK_METHOD_NAMES, EVENT_TYPE, eventTypeName } from '../protocol/constants';
+import {
+  EVENT_UNLOCK_METHOD_NAMES,
+  EVENT_TYPE,
+  eventTypeName,
+} from '../protocol/constants';
 import type { MotoClient } from '../protocol/MotoClient';
 import type { EventRecord } from '../protocol/types';
+import { colors } from '../ui/theme';
 
 interface Props {
   client: MotoClient;
@@ -52,8 +63,10 @@ export function EventLogScreen({ client, onDone }: Props): React.JSX.Element {
     setError(null);
     client
       .getEventLog(0)
-      .then((r) => setRecords([...r].reverse())) // newest-first for display
-      .catch((err: unknown) => setError(err instanceof Error ? err.message : String(err)))
+      .then(r => setRecords([...r].reverse())) // newest-first for display
+      .catch((err: unknown) =>
+        setError(err instanceof Error ? err.message : String(err)),
+      )
       .finally(() => setLoading(false));
   }, [client]);
 
@@ -69,21 +82,31 @@ export function EventLogScreen({ client, onDone }: Props): React.JSX.Element {
           <Text style={styles.link}>Done</Text>
         </TouchableOpacity>
       </View>
-      <TouchableOpacity style={styles.refreshButton} onPress={refresh} disabled={loading}>
-        <Text style={styles.refreshButtonText}>{loading ? 'Loading…' : 'Refresh'}</Text>
+      <TouchableOpacity
+        style={styles.refreshButton}
+        onPress={refresh}
+        disabled={loading}
+      >
+        <Text style={styles.refreshButtonText}>
+          {loading ? 'Loading…' : 'Refresh'}
+        </Text>
       </TouchableOpacity>
       {error && <Text style={styles.error}>{error}</Text>}
-      {!loading && !error && records.length === 0 && <Text style={styles.hint}>No events recorded yet.</Text>}
+      {!loading && !error && records.length === 0 && (
+        <Text style={styles.hint}>No events recorded yet.</Text>
+      )}
       <FlatList
         data={records}
-        keyExtractor={(r) => String(r.seq)}
+        keyExtractor={r => String(r.seq)}
         contentContainerStyle={styles.listContent}
         renderItem={({ item }) => (
           <View style={styles.row}>
             <Text style={styles.rowSeq}>#{item.seq}</Text>
             <View style={styles.rowBody}>
               <Text style={styles.rowText}>{describeEvent(item)}</Text>
-              <Text style={styles.rowMeta}>at {formatUptime(item.uptimeMs)} uptime</Text>
+              <Text style={styles.rowMeta}>
+                at {formatUptime(item.uptimeMs)} uptime
+              </Text>
             </View>
           </View>
         )}
@@ -93,25 +116,35 @@ export function EventLogScreen({ client, onDone }: Props): React.JSX.Element {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, padding: 16, gap: 10 },
-  header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-  title: { fontSize: 20, fontWeight: '700' },
-  link: { color: '#2563eb' },
-  hint: { fontSize: 12, color: '#666' },
-  error: { color: '#b91c1c' },
-  refreshButton: { padding: 10, borderRadius: 8, borderWidth: 1, borderColor: '#2563eb', alignItems: 'center' },
-  refreshButtonText: { color: '#2563eb', fontWeight: '600' },
+  container: { flex: 1, backgroundColor: colors.bg, padding: 16, gap: 10 },
+  header: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  title: { color: colors.text, fontSize: 20, fontWeight: '700' },
+  link: { color: colors.accent },
+  hint: { fontSize: 12, color: colors.textMuted },
+  error: { color: colors.danger },
+  refreshButton: {
+    padding: 10,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: colors.accent,
+    alignItems: 'center',
+  },
+  refreshButtonText: { color: colors.accent, fontWeight: '600' },
   listContent: { gap: 6, paddingVertical: 8 },
   row: {
     flexDirection: 'row',
     gap: 10,
     padding: 10,
     borderWidth: 1,
-    borderColor: '#eee',
+    borderColor: colors.border,
     borderRadius: 8,
   },
-  rowSeq: { fontFamily: 'Menlo', color: '#888', width: 44 },
+  rowSeq: { fontFamily: 'Menlo', color: colors.textFaint, width: 44 },
   rowBody: { flex: 1 },
-  rowText: { fontWeight: '600' },
-  rowMeta: { fontSize: 11, color: '#888' },
+  rowText: { color: colors.text, fontWeight: '600' },
+  rowMeta: { fontSize: 11, color: colors.textFaint },
 });

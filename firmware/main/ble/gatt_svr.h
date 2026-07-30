@@ -10,3 +10,13 @@ int gatt_svr_init(mc_app_t *app);
 /* Session lifecycle, driven by the GAP connect/disconnect events. */
 void gatt_svr_on_connect(uint16_t conn_handle);
 void gatt_svr_on_disconnect(uint16_t conn_handle);
+
+/* Pushes one input event (MC_OP_INPUT_EVENT) to every session that has
+ * MC_OP_INPUT_LEARN enabled. A no-op when no session is in learn mode, which
+ * is the normal riding case — so calling this for every press is cheap.
+ *
+ * Called from app_task, not the NimBLE host task, so it must not be given
+ * anything that isn't safe to touch from another task. It only reads the
+ * session table and calls ble_gatts_notify_custom(), which is safe to invoke
+ * from an application task. */
+void gatt_svr_push_input_event(uint8_t button, uint8_t press_type, bool action_suppressed);

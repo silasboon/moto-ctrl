@@ -2,6 +2,19 @@
 
     <uses-permission android:name="android.permission.INTERNET" />
 
+    <!-- BLE scan/connect (AGENTS.md: react-native-ble-plx transport).
+         Android 12+ (API 31+) uses BLUETOOTH_SCAN/BLUETOOTH_CONNECT;
+         neverForLocation is safe here since the app only scans for a
+         specific device name and never derives location from scan
+         results. Pre-12 devices (minSdkVersion 24) fall back to the
+         legacy BLUETOOTH/BLUETOOTH_ADMIN + location permissions, which
+         Android required for BLE scanning before API 31. -->
+    <uses-permission android:name="android.permission.BLUETOOTH" android:maxSdkVersion="30" />
+    <uses-permission android:name="android.permission.BLUETOOTH_ADMIN" android:maxSdkVersion="30" />
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" android:maxSdkVersion="30" />
+    <uses-permission android:name="android.permission.BLUETOOTH_SCAN" android:usesPermissionFlags="neverForLocation" />
+    <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
+
     <application
       android:name=".MainApplication"
       android:label="@string/app_name"

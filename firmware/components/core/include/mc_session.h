@@ -42,6 +42,11 @@ typedef struct {
     mc_diag_t *diag; /* may be NULL (then diag ops report REJECTED and status battery/fault stay 0) */
     mc_ota_t *ota;   /* may be NULL (then every OTA op reports REJECTED) */
     mc_event_log_t *event_log; /* may be NULL (then EVENT_LOG_GET reports REJECTED) */
+    /* The live input engine, so a CONFIG_WRITE commit can push new chord
+     * definitions and press timing into it (mc_input_set_config). May be NULL
+     * — then input config changes only take effect on the next boot, which is
+     * the bug this pointer exists to prevent. */
+    mc_input_engine_t *input;
 
     /* Platform fills the fields it owns (uptime_ms, battery_mv, rssi_dbm);
      * the session overlays output_state_mask from `output`, lock_state +
@@ -112,6 +117,10 @@ typedef struct {
     uint16_t cfg_write_total;
     uint16_t cfg_write_got;
     bool cfg_write_active;
+
+    /* MC_OP_INPUT_LEARN: push input events to this session (mc_protocol.h).
+     * Cleared by mc_session_init(), so it can never outlive the BLE link. */
+    bool input_learn;
 } mc_session_t;
 
 /* Resets a session to unauthenticated. Call when a new connection opens. */

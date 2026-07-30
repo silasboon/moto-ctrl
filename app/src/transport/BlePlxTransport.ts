@@ -16,20 +16,34 @@
  * covers the foreground happy path: scan, connect, write, and be
  * notified — which is what the dashboard/pin mapper/pairing screens need.
  */
-import { BleError, BleManager, type Characteristic, type Device, type Subscription } from 'react-native-ble-plx';
+import {
+  BleError,
+  BleManager,
+  type Characteristic,
+  type Device,
+  type Subscription,
+} from 'react-native-ble-plx';
 
 import { CHANNEL_GATT, DEVICE_NAME, MC_CH } from '../protocol/constants';
 import { base64ToBytes, bytesToBase64 } from '../protocol/frames';
 import type { ConnectionState, DeviceDescriptor, Transport } from './Transport';
 
-const ALL_CHANNELS = [MC_CH.STATUS, MC_CH.AUTH, MC_CH.COMMAND, MC_CH.CONFIG, MC_CH.OTA];
+const ALL_CHANNELS = [
+  MC_CH.STATUS,
+  MC_CH.AUTH,
+  MC_CH.COMMAND,
+  MC_CH.CONFIG,
+  MC_CH.OTA,
+];
 
 export class BlePlxTransport implements Transport {
   private _manager: BleManager | null = null;
   private device: Device | null = null;
   private state: ConnectionState = 'disconnected';
   private readonly stateListeners = new Set<(state: ConnectionState) => void>();
-  private readonly messageListeners = new Set<(channel: number, data: Uint8Array) => void>();
+  private readonly messageListeners = new Set<
+    (channel: number, data: Uint8Array) => void
+  >();
   private readonly monitors: Subscription[] = [];
 
   /** Lazy: constructing a BleManager touches the native BLE module
@@ -45,14 +59,18 @@ export class BlePlxTransport implements Transport {
   }
 
   scan(onFound: (device: DeviceDescriptor) => void): () => void {
-    this.manager.startDeviceScan(null, null, (error: BleError | null, device: Device | null) => {
-      if (error || !device) {
-        return;
-      }
-      if (device.name === DEVICE_NAME) {
-        onFound({ id: device.id, name: device.name });
-      }
-    });
+    this.manager.startDeviceScan(
+      null,
+      null,
+      (error: BleError | null, device: Device | null) => {
+        if (error || !device) {
+          return;
+        }
+        if (device.name === DEVICE_NAME) {
+          onFound({ id: device.id, name: device.name });
+        }
+      },
+    );
     return () => this.manager.stopDeviceScan();
   }
 
@@ -110,7 +128,9 @@ export class BlePlxTransport implements Transport {
     return this.state;
   }
 
-  onConnectionStateChange(listener: (state: ConnectionState) => void): () => void {
+  onConnectionStateChange(
+    listener: (state: ConnectionState) => void,
+  ): () => void {
     this.stateListeners.add(listener);
     return () => this.stateListeners.delete(listener);
   }
@@ -118,9 +138,15 @@ export class BlePlxTransport implements Transport {
   async send(channel: number, data: Uint8Array): Promise<void> {
     const gatt = CHANNEL_GATT[channel];
     if (!this.device || !gatt) {
-      throw new Error(`BlePlxTransport: not connected or unknown channel ${channel}`);
+      throw new Error(
+        `BlePlxTransport: not connected or unknown channel ${channel}`,
+      );
     }
-    await this.device.writeCharacteristicWithResponseForService(gatt.service, gatt.characteristic, bytesToBase64(data));
+    await this.device.writeCharacteristicWithResponseForService(
+      gatt.service,
+      gatt.characteristic,
+      bytesToBase64(data),
+    );
   }
 
   onMessage(listener: (channel: number, data: Uint8Array) => void): () => void {

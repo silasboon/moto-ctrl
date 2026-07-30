@@ -187,6 +187,125 @@ static uint16_t sim_diag_read_vbat_mv(void *ctx)
     return dbg->battery_mv;
 }
 
+/* Mirrors binding_targets_channel()/channel_is_momentary()/momentary_tick()
+ * in firmware/main/main.c. Momentary channels follow button LEVEL rather than
+ * latching on a press event — see mc_output.h's momentary field. */
+static bool binding_targets_channel(const mc_action_list_t *list, uint8_t ch)
+{
+    for (uint8_t i = 0; i < list->count && i < MC_ACTION_LIST_MAX; i++) {
+        mc_action_id_t a = list->actions[i];
+        if (a >= MC_ACTION_OUTPUT_TOGGLE_BASE &&
+            a - MC_ACTION_OUTPUT_TOGGLE_BASE == ch) {
+            return true;
+        }
+        if (a == MC_ACTION_TURN_L_TOGGLE || a == MC_ACTION_TURN_R_TOGGLE) {
+            mc_indicator_side_t side =
+                (a == MC_ACTION_TURN_L_TOGGLE) ? MC_INDICATOR_LEFT : MC_INDICATOR_RIGHT;
+            if (mc_output_find_indicator_channel(&g_config.outputs, side) == (int)ch) {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+static bool channel_is_momentary(uint8_t ch)
+{
+    return ch < MC_OUTPUT_COUNT &&
+           g_config.outputs.channels[ch].behaviour == MC_OUT_BEHAVIOUR_MOMENTARY;
+}
+
+static void momentary_tick(void)
+{
+    for (uint8_t ch = 0; ch < MC_OUTPUT_COUNT; ch++) {
+        if (g_config.outputs.channels[ch].behaviour != MC_OUT_BEHAVIOUR_MOMENTARY) {
+            continue;
+        }
+        /* A momentary output follows a HOLD, never a tap: a single/double
+         * tap binds to toggle/blink instead, so waiting for the hold
+         * threshold keeps a tap from blipping the output. */
+        bool held = false;
+        for (uint8_t b = 0; b < MC_INPUT_COUNT && !held; b++) {
+            if (binding_targets_channel(&g_config.inputs.long_press_actions[b], ch) &&
+                mc_input_hold_active(&g_input, b)) {
+                held = true;
+            }
+        }
+        /* ...or a chord that is still being held down. */
+        for (uint8_t i = 0; i < g_config.inputs.combo_count && !held; i++) {
+            if (g_config.inputs.combos[i].type == MC_COMBO_CHORD &&
+                binding_targets_channel(&g_config.inputs.combos[i].actions, ch) &&
+                mc_input_chord_held(&g_input, i)) {
+                held = true;
+            }
+        }
+        if (held != mc_output_get_state(&g_output, ch)) {
+            mc_output_set(&g_output, ch, held, MC_OUT_SRC_LOCAL);
+        }
+    }
+}
+
+/* Mirrors dispatch_action()/action_for_press() in firmware/main/main.c
+ * exactly — the sim and the target must bind buttons identically or the
+ * scenario replay tests in docs/TESTING.md stop proving anything about real
+ * firmware behaviour. */
+static bool dispatch_action(mc_action_id_t action, uint32_t t)
+{
+    if (action == MC_ACTION_NONE) {
+        return false;
+    }
+
+    if (action >= MC_ACTION_OUTPUT_TOGGLE_BASE &&
+        action < MC_ACTION_OUTPUT_TOGGLE_BASE + MC_OUTPUT_COUNT) {
+        uint8_t ch = (uint8_t)(action - MC_ACTION_OUTPUT_TOGGLE_BASE);
+        if (channel_is_momentary(ch)) {
+            return true; /* momentary_tick() owns it */
+        }
+        mc_output_set(&g_output, ch, !mc_output_get_state(&g_output, ch), MC_OUT_SRC_LOCAL);
+        return true;
+    }
+
+    switch (action) {
+    case MC_ACTION_TURN_L_TOGGLE:
+    case MC_ACTION_TURN_R_TOGGLE: {
+        mc_indicator_side_t side =
+            (action == MC_ACTION_TURN_L_TOGGLE) ? MC_INDICATOR_LEFT : MC_INDICATOR_RIGHT;
+        int ch = mc_output_find_indicator_channel(&g_config.outputs, side);
+        if (ch >= 0 && !channel_is_momentary((uint8_t)ch)) {
+            mc_output_set(&g_output, (uint8_t)ch, !mc_output_get_state(&g_output, (uint8_t)ch),
+                          MC_OUT_SRC_LOCAL);
+        }
+        return true;
+    }
+    case MC_ACTION_HAZARD_TOGGLE:
+        mc_output_hazard_press(&g_output, t);
+        return true;
+    default:
+        return false;
+    }
+}
+
+static void dispatch_action_list(const mc_action_list_t *list, uint32_t t)
+{
+    for (uint8_t i = 0; i < list->count && i < MC_ACTION_LIST_MAX; i++) {
+        dispatch_action(list->actions[i], t);
+    }
+}
+
+static const mc_action_list_t *actions_for_press(uint8_t button, mc_press_event_type_t type)
+{
+    static const mc_action_list_t none = { .count = 0 };
+    if (button >= MC_INPUT_COUNT) {
+        return &none;
+    }
+    switch (type) {
+    case MC_PRESS_SHORT:  return &g_config.inputs.short_press_actions[button];
+    case MC_PRESS_LONG:   return &g_config.inputs.long_press_actions[button];
+    case MC_PRESS_DOUBLE: return &g_config.inputs.double_press_actions[button];
+    default:              return &none;
+    }
+}
+
 static void persist_config_cb(void *ctx)
 {
     (void)ctx;
@@ -274,12 +393,32 @@ static void push_status_tick(void)
     mc_session_handle(&tmp, &g_app, MC_CH_STATUS, &op, 1, push_adapter, NULL);
 }
 
+/* The single active connection's session, so the ticker thread can check
+ * MC_OP_INPUT_LEARN without a `conn` handle — the sim's counterpart to
+ * gatt_svr_push_input_event() iterating the real session table. ws_server
+ * only ever has one connection at a time (ws_server.h). */
+static mc_session_t *g_active_session;
+
+/* Mirrors gatt_svr_push_input_event(). A no-op unless an authenticated
+ * client asked for learn mode. */
+static void push_input_event(uint8_t button, uint8_t press_type, bool action_suppressed)
+{
+    mc_session_t *s = g_active_session;
+    if (s == NULL || !s->input_learn || !mc_session_is_authed(s)) {
+        return;
+    }
+    const uint8_t frame[4] = { MC_OP_INPUT_EVENT, button, press_type,
+                               (uint8_t)(action_suppressed ? 1 : 0) };
+    push_adapter(NULL, MC_CH_COMMAND, frame, sizeof(frame));
+}
+
 static void *on_open(void *user)
 {
     (void)user;
     mc_session_t *s = malloc(sizeof(mc_session_t));
     if (s != NULL) {
         mc_session_init(s);
+        g_active_session = s;
         sim_debug_logf(&g_dbg, "client connected");
     }
     return s;
@@ -311,6 +450,11 @@ static void on_close(void *user, void *userdata)
 {
     (void)user;
     sim_debug_logf(&g_dbg, "client disconnected");
+    if (g_active_session == userdata) {
+        /* Clear before freeing: learn mode must not outlive the link, and a
+         * dangling pointer here would be read by the ticker thread. */
+        g_active_session = NULL;
+    }
     free(userdata);
 }
 
@@ -339,13 +483,14 @@ static void *ticker_thread(void *arg)
          * mc_lock sees this same tick's freshest engine_running
          * (voltage-derived, AGENTS.md #6) — mirrors firmware/main/main.c's
          * app_task ordering. */
+        momentary_tick();
         mc_output_tick(&g_output, t);
 
         /* Brake-lever/pedal switch pass-through — mirrors
          * firmware/main/main.c's app_task exactly (see its comment). */
         int8_t brake_in = g_config.outputs.brake_switch_input;
         if (brake_in >= 0) {
-            int brake_ch = mc_output_find_channel_by_function(&g_config.outputs, MC_OUT_FUNC_BRAKE);
+            int brake_ch = mc_output_find_brake_channel(&g_config.outputs);
             if (brake_ch >= 0) {
                 bool asserted = mc_input_button_level(&g_input, (uint8_t)brake_in);
                 if (asserted != mc_output_get_state(&g_output, (uint8_t)brake_ch)) {
@@ -386,10 +531,12 @@ static void *ticker_thread(void *arg)
         while (mc_input_pop_event(&g_input, &evt)) {
             /* Mirrors firmware/main/main.c: only short presses feed the
              * cheat-code (a no-op unless the sim bike is currently
-             * LOCKED); the generic combos[] mechanism has no action bound
-             * yet (future phase), so it's still just logged. */
+             * LOCKED), while action bindings fire for all three press
+             * types and for generic combos. */
             if (evt.kind == MC_INPUT_EVT_PRESS) {
                 sim_debug_logf(&g_dbg, "button %u press type %d", evt.data.press.button, (int)evt.data.press.type);
+                push_input_event(evt.data.press.button, (uint8_t)evt.data.press.type,
+                                 evt.data.press.action_suppressed);
                 if (evt.data.press.type == MC_PRESS_SHORT) {
                     bool was_backoff = g_lock.backoff_active;
                     mc_lock_cheatcode_outcome_t co =
@@ -405,25 +552,18 @@ static void *ticker_thread(void *arg)
                         uint8_t arg0 = (wrong > 0xFF) ? 0xFF : (uint8_t)wrong;
                         log_event_cb(NULL, MC_EVT_CHEATCODE_LOCKOUT, arg0, 0);
                     }
+                }
 
-                    /* Turn/hazard handlebar bindings — mirrors
-                     * firmware/main/main.c's app_task exactly. */
-                    mc_action_id_t action = g_config.inputs.short_press_action[evt.data.press.button];
-                    if (action == MC_ACTION_TURN_L_TOGGLE || action == MC_ACTION_TURN_R_TOGGLE) {
-                        mc_output_function_t fn =
-                            (action == MC_ACTION_TURN_L_TOGGLE) ? MC_OUT_FUNC_TURN_L : MC_OUT_FUNC_TURN_R;
-                        int ch = mc_output_find_channel_by_function(&g_config.outputs, fn);
-                        if (ch >= 0) {
-                            mc_output_set(&g_output, (uint8_t)ch, !mc_output_get_state(&g_output, (uint8_t)ch),
-                                          MC_OUT_SRC_LOCAL);
-                        }
-                    } else if (action == MC_ACTION_HAZARD_TOGGLE) {
-                        mc_output_hazard_press(&g_output, t);
-                    }
+                /* action_suppressed: a chord containing this button already
+                 * fired. The cheat-code feed above ignores it (AGENTS.md
+                 * #3); only action dispatch honours it. */
+                if (!evt.data.press.action_suppressed) {
+                    dispatch_action_list(actions_for_press(evt.data.press.button, evt.data.press.type), t);
                 }
             } else {
-                sim_debug_logf(&g_dbg, "combo %u matched (action %u) - no action bound yet",
-                               evt.data.combo.combo_index, evt.data.combo.action_id);
+                sim_debug_logf(&g_dbg, "combo %u matched (%u action(s))",
+                               evt.data.combo.combo_index, evt.data.combo.actions.count);
+                dispatch_action_list(&evt.data.combo.actions, t);
             }
         }
 
@@ -539,6 +679,7 @@ int main(int argc, char **argv)
     g_app.diag = &g_diag;
     g_app.ota = &g_ota;
     g_app.event_log = &g_event_log;
+    g_app.input = &g_input;
     g_app.fill_status = sim_fill_status;
     g_app.persist_config = persist_config_cb;
     g_app.persist_keystore = persist_keystore_cb;

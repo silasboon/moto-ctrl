@@ -1,4 +1,14 @@
-import { base64ToBytes, bytesToBase64, concatBytes, readU16le, readU32le, u16le, u32le, utf8Decode, utf8Encode } from '../protocol/frames';
+import {
+  base64ToBytes,
+  bytesToBase64,
+  concatBytes,
+  readU16le,
+  readU32le,
+  u16le,
+  u32le,
+  utf8Decode,
+  utf8Encode,
+} from '../protocol/frames';
 
 describe('byte helpers', () => {
   test('u16le / readU16le round-trip', () => {
@@ -19,14 +29,20 @@ describe('byte helpers', () => {
   });
 
   test('concatBytes joins in order', () => {
-    const out = concatBytes(new Uint8Array([1, 2]), new Uint8Array([]), new Uint8Array([3]));
+    const out = concatBytes(
+      new Uint8Array([1, 2]),
+      new Uint8Array([]),
+      new Uint8Array([3]),
+    );
     expect(Array.from(out)).toEqual([1, 2, 3]);
   });
 
   test('base64 round-trips arbitrary bytes, including lengths not divisible by 3', () => {
     for (const len of [0, 1, 2, 3, 4, 5, 16, 32, 64]) {
       const bytes = new Uint8Array(len).map((_, i) => (i * 37 + 7) % 256);
-      expect(Array.from(base64ToBytes(bytesToBase64(bytes)))).toEqual(Array.from(bytes));
+      expect(Array.from(base64ToBytes(bytesToBase64(bytes)))).toEqual(
+        Array.from(bytes),
+      );
     }
   });
 

@@ -15,8 +15,30 @@
 import nacl from 'tweetnacl';
 
 import type { Transport } from '../transport/Transport';
-import { AUTH_CONTEXT, CONFIG_CHUNK_BYTES, CONFIG_JSON_MAX, MC_CH, MC_OP, MC_RESULT, OTA_CHUNK_BYTES, OUTPUT_COUNT, resultName } from './constants';
-import { concatBytes, f32le, i16le, readF32le, readI16le, readU16le, readU32le, u16le, u32le, utf8Decode, utf8Encode } from './frames';
+import {
+  AUTH_CONTEXT,
+  CONFIG_CHUNK_BYTES,
+  CONFIG_JSON_MAX,
+  MC_CH,
+  MC_OP,
+  MC_RESULT,
+  OTA_CHUNK_BYTES,
+  OUTPUT_COUNT,
+  resultName,
+} from './constants';
+import {
+  concatBytes,
+  f32le,
+  i16le,
+  readF32le,
+  readI16le,
+  readU16le,
+  readU32le,
+  u16le,
+  u32le,
+  utf8Decode,
+  utf8Encode,
+} from './frames';
 import type {
   DeviceConfig,
   DiagCalib,
@@ -36,6 +58,18 @@ export interface ResultOutcome {
   result: number;
   resultName: string;
 }
+
+/** A button press reported by the device while learn mode is on
+ * (docs/PROTOCOL.md §14.1). */
+export interface InputEvent {
+  /** Input index, 0-7. */
+  button: number;
+  pressType: 'short' | 'long' | 'double';
+  /** True when a chord consumed this press, so its own binding didn't fire. */
+  actionSuppressed: boolean;
+}
+
+const PRESS_TYPE_NAMES: InputEvent['pressType'][] = ['short', 'long', 'double'];
 
 export interface AuthOutcome extends ResultOutcome {
   slot: number;
@@ -61,7 +95,11 @@ function parseStatus(b: Uint8Array): Status {
 }
 
 function outcome(result: number): ResultOutcome {
-  return { ok: result === MC_RESULT.OK, result, resultName: resultName(result) };
+  return {
+    ok: result === MC_RESULT.OK,
+    result,
+    resultName: resultName(result),
+  };
 }
 
 interface PendingReply {
@@ -75,6 +113,7 @@ export class MotoClient {
   private authedSlot = -1;
   private pending = new Map<number, PendingReply>();
   private statusListeners = new Set<(status: Status) => void>();
+  private inputEventListeners = new Set<(event: InputEvent) => void>();
   private pollTimer: ReturnType<typeof setInterval> | null = null;
   private unsubscribeMessage: (() => void) | null = null;
   private unsubscribeConnState: (() => void) | null = null;
@@ -83,13 +122,23 @@ export class MotoClient {
 
   async connect(deviceId: string): Promise<void> {
     this.unsubscribeMessage?.();
-    this.unsubscribeMessage = this.transport.onMessage((channel, data) => this.handleMessage(channel, data));
-    this.unsubscribeConnState = this.transport.onConnectionStateChange((state) => {
-      if (state !== 'connected') {
-        this.stopPolling();
-        this.authedSlot = -1;
-      }
-    });
+    this.unsubscribeMessage = this.transport.onMessage((channel, data) =>
+      this.handleMessage(channel, data),
+    );
+    this.unsubscribeConnState = this.transport.onConnectionStateChange(
+      state => {
+        if (state !== 'connected') {
+          this.stopPolling();
+          this.authedSlot = -1;
+          /* Fail every in-flight request immediately, with a reason. Without
+           * this they sit armed until REPLY_TIMEOUT_MS and then reject with a
+           * bare "timed out", which reads as a protocol fault rather than
+           * "the board went away" — and, if the caller navigated on, surfaces
+           * as an unhandled rejection seconds after the fact. */
+          this.failPending(new Error('MotoClient: the board disconnected'));
+        }
+      },
+    );
     await this.transport.connect(deviceId);
     this.startPolling();
   }
@@ -106,7 +155,9 @@ export class MotoClient {
     return this.transport.getConnectionState();
   }
 
-  onConnectionStateChange(listener: (state: ReturnType<Transport['getConnectionState']>) => void): () => void {
+  onConnectionStateChange(
+    listener: (state: ReturnType<Transport['getConnectionState']>) => void,
+  ): () => void {
     return this.transport.onConnectionStateChange(listener);
   }
 
@@ -124,7 +175,11 @@ export class MotoClient {
   }
 
   async getStatus(): Promise<Status> {
-    const reply = await this.request(MC_CH.STATUS, MC_OP.STATUS_GET, new Uint8Array(0));
+    const reply = await this.request(
+      MC_CH.STATUS,
+      MC_OP.STATUS_GET,
+      new Uint8Array(0),
+    );
     const status = parseStatus(reply.body);
     this.status = status;
     for (const l of this.statusListeners) l(status);
@@ -140,7 +195,9 @@ export class MotoClient {
     await this.send(MC_CH.AUTH, MC_OP.AUTH_BEGIN, new Uint8Array(0));
     const challenge = await challengePromise;
     if (challenge.op !== MC_OP.AUTH_CHALLENGE) {
-      throw new Error(`MotoClient.authenticate: unexpected reply op 0x${challenge.op.toString(16)}`);
+      throw new Error(
+        `MotoClient.authenticate: unexpected reply op 0x${challenge.op.toString(16)}`,
+      );
     }
     const nonce = challenge.body;
     const message = concatBytes(utf8Encode(AUTH_CONTEXT), nonce);
@@ -164,21 +221,31 @@ export class MotoClient {
    * key, by design (AGENTS.md safety requirement #4). */
   async enroll(publicKey: Uint8Array, label: string): Promise<AuthOutcome> {
     const labelBytes = utf8Encode(label).subarray(0, 23);
-    const reply = await this.request(MC_CH.AUTH, MC_OP.ENROLL, concatBytes(publicKey, labelBytes));
+    const reply = await this.request(
+      MC_CH.AUTH,
+      MC_OP.ENROLL,
+      concatBytes(publicKey, labelBytes),
+    );
     const resultCode = reply.body[0]!;
     const slot = reply.body[1]!;
     return { ...outcome(resultCode), slot };
   }
 
   async keyList(): Promise<EnrolledKey[]> {
-    const reply = await this.request(MC_CH.AUTH, MC_OP.KEY_LIST, new Uint8Array(0));
+    const reply = await this.request(
+      MC_CH.AUTH,
+      MC_OP.KEY_LIST,
+      new Uint8Array(0),
+    );
     const count = reply.body[0]!;
     const keys: EnrolledKey[] = [];
     let pos = 1;
     for (let i = 0; i < count; i++) {
       const slot = reply.body[pos]!;
       const labelLen = reply.body[pos + 1]!;
-      const label = utf8Decode(reply.body.subarray(pos + 2, pos + 2 + labelLen));
+      const label = utf8Decode(
+        reply.body.subarray(pos + 2, pos + 2 + labelLen),
+      );
       keys.push({ slot, label });
       pos += 2 + labelLen;
     }
@@ -186,12 +253,20 @@ export class MotoClient {
   }
 
   async keyRevoke(slot: number): Promise<ResultOutcome> {
-    const reply = await this.request(MC_CH.AUTH, MC_OP.KEY_REVOKE, new Uint8Array([slot]));
+    const reply = await this.request(
+      MC_CH.AUTH,
+      MC_OP.KEY_REVOKE,
+      new Uint8Array([slot]),
+    );
     return outcome(reply.body[0]!);
   }
 
   async setOutput(channel: number, on: boolean): Promise<ResultOutcome> {
-    const reply = await this.request(MC_CH.COMMAND, MC_OP.SET_OUTPUT, new Uint8Array([channel, on ? 1 : 0]));
+    const reply = await this.request(
+      MC_CH.COMMAND,
+      MC_OP.SET_OUTPUT,
+      new Uint8Array([channel, on ? 1 : 0]),
+    );
     const result = outcome(reply.body[1]!);
     // Refresh status right after a command so the UI reflects the change
     // without waiting for the next poll tick.
@@ -204,10 +279,34 @@ export class MotoClient {
    * device-side, and arming no auto-cancel timer (hazards stay on until
    * pressed again). REJECTED if neither channel is configured. */
   async hazardPress(): Promise<ResultOutcome> {
-    const reply = await this.request(MC_CH.COMMAND, MC_OP.HAZARD_PRESS, new Uint8Array(0));
+    const reply = await this.request(
+      MC_CH.COMMAND,
+      MC_OP.HAZARD_PRESS,
+      new Uint8Array(0),
+    );
     const result = outcome(reply.body[1]!);
     this.getStatus().catch(() => {});
     return result;
+  }
+
+  /** Subscribes to button presses pushed while learn mode is on. Returns an
+   * unsubscribe function. Listening alone does nothing — call
+   * `inputLearn(true)` to make the device start sending. */
+  onInputEvent(listener: (event: InputEvent) => void): () => void {
+    this.inputEventListeners.add(listener);
+    return () => this.inputEventListeners.delete(listener);
+  }
+
+  /** Turns button-identification learn mode on or off for this session
+   * (docs/PROTOCOL.md §14.1). Off by default; the device also drops it on
+   * disconnect, so there's no risk of leaving it on across a reconnect. */
+  async inputLearn(enable: boolean): Promise<ResultOutcome> {
+    const reply = await this.request(
+      MC_CH.COMMAND,
+      MC_OP.INPUT_LEARN,
+      new Uint8Array([enable ? 1 : 0]),
+    );
+    return outcome(reply.body[1]!);
   }
 
   async configRead(): Promise<DeviceConfig> {
@@ -219,11 +318,25 @@ export class MotoClient {
    * bytes are collected. Reassembles by offset, since chunks are not
    * guaranteed to arrive in order. */
   private readConfigBytes(): Promise<Uint8Array> {
-    return new Promise<Uint8Array>((resolve, reject) => {
+    const promise = new Promise<Uint8Array>((resolve, reject) => {
       const chunks = new Map<number, Uint8Array>();
+      let expectedTotal = 0;
+      /* Report how much arrived, not just that time ran out. "no chunks at
+       * all" (device never answered) and "1920 of 2250 bytes" (chunks were
+       * dropped in flight) have completely different causes, and the bare
+       * "timed out" hid that distinction during the msys-pool-exhaustion bug
+       * — see ble_send() in firmware/main/ble/gatt_svr.c. */
       const timer = setTimeout(() => {
         this.pending.delete(MC_CH.CONFIG);
-        reject(new Error('MotoClient.configRead: timed out'));
+        const got = [...chunks.values()].reduce((n, d) => n + d.length, 0);
+        reject(
+          new Error(
+            expectedTotal === 0
+              ? 'MotoClient.configRead: timed out with no response from the device'
+              : `MotoClient.configRead: timed out after ${got} of ${expectedTotal} bytes ` +
+                  `(${chunks.size} chunk(s) received; some were dropped in flight)`,
+          ),
+        );
       }, REPLY_TIMEOUT_MS);
       const fail = (err: Error) => {
         clearTimeout(timer);
@@ -232,16 +345,23 @@ export class MotoClient {
       };
 
       this.pending.set(MC_CH.CONFIG, {
-        resolve: (frame) => {
+        resolve: frame => {
           if (frame.op !== MC_OP.CONFIG_CHUNK) {
-            fail(new Error(`MotoClient.configRead: unexpected reply op 0x${frame.op.toString(16)}`));
+            fail(
+              new Error(
+                `MotoClient.configRead: unexpected reply op 0x${frame.op.toString(16)}`,
+              ),
+            );
             return;
           }
           const total = readU16le(frame.body, 2);
           if (total === 0) {
-            fail(new Error('MotoClient.configRead: device reported empty config'));
+            fail(
+              new Error('MotoClient.configRead: device reported empty config'),
+            );
             return;
           }
+          expectedTotal = total;
           const offset = readU16le(frame.body, 0);
           chunks.set(offset, frame.body.subarray(4));
           const got = [...chunks.values()].reduce((n, d) => n + d.length, 0);
@@ -258,22 +378,46 @@ export class MotoClient {
         timer,
       });
 
-      this.send(MC_CH.CONFIG, MC_OP.CONFIG_READ, new Uint8Array(0)).catch((err) => fail(err as Error));
+      this.send(MC_CH.CONFIG, MC_OP.CONFIG_READ, new Uint8Array(0)).catch(err =>
+        fail(err as Error),
+      );
     });
+
+    /* Same reason as waitForReply(): armed before the caller awaits, so a
+     * disconnect landing in that gap would otherwise read as unhandled. */
+    promise.catch(() => {});
+    return promise;
   }
 
   async configWrite(config: DeviceConfig): Promise<ResultOutcome> {
     const json = JSON.stringify(config);
     const bytes = utf8Encode(json);
     if (bytes.length === 0 || bytes.length > CONFIG_JSON_MAX) {
-      throw new Error(`MotoClient.configWrite: ${bytes.length} bytes exceeds CONFIG_JSON_MAX (${CONFIG_JSON_MAX})`);
+      throw new Error(
+        `MotoClient.configWrite: ${bytes.length} bytes exceeds CONFIG_JSON_MAX (${CONFIG_JSON_MAX})`,
+      );
     }
-    await this.send(MC_CH.CONFIG, MC_OP.CONFIG_WRITE_BEGIN, u16le(bytes.length));
+    await this.send(
+      MC_CH.CONFIG,
+      MC_OP.CONFIG_WRITE_BEGIN,
+      u16le(bytes.length),
+    );
     for (let off = 0; off < bytes.length; off += CONFIG_CHUNK_BYTES) {
-      const chunk = bytes.subarray(off, Math.min(off + CONFIG_CHUNK_BYTES, bytes.length));
-      await this.send(MC_CH.CONFIG, MC_OP.CONFIG_WRITE_CHUNK, concatBytes(u16le(off), chunk));
+      const chunk = bytes.subarray(
+        off,
+        Math.min(off + CONFIG_CHUNK_BYTES, bytes.length),
+      );
+      await this.send(
+        MC_CH.CONFIG,
+        MC_OP.CONFIG_WRITE_CHUNK,
+        concatBytes(u16le(off), chunk),
+      );
     }
-    const reply = await this.request(MC_CH.CONFIG, MC_OP.CONFIG_WRITE_COMMIT, new Uint8Array(0));
+    const reply = await this.request(
+      MC_CH.CONFIG,
+      MC_OP.CONFIG_WRITE_COMMIT,
+      new Uint8Array(0),
+    );
     return outcome(reply.body[0]!);
   }
 
@@ -285,24 +429,44 @@ export class MotoClient {
    * `.mcota` bundle (updateCheck.ts's parseMcotaBundle) — see
    * FirmwareBundle. Prefer uploadFirmware() below over calling this
    * directly; it drives the whole begin/chunk/commit sequence. */
-  async otaBegin(imageSize: number, sha512: Uint8Array, signature: Uint8Array): Promise<ResultOutcome> {
-    const reply = await this.request(MC_CH.OTA, MC_OP.OTA_BEGIN, concatBytes(u32le(imageSize), sha512, signature));
+  async otaBegin(
+    imageSize: number,
+    sha512: Uint8Array,
+    signature: Uint8Array,
+  ): Promise<ResultOutcome> {
+    const reply = await this.request(
+      MC_CH.OTA,
+      MC_OP.OTA_BEGIN,
+      concatBytes(u32le(imageSize), sha512, signature),
+    );
     return outcome(reply.body[0]!);
   }
 
   async otaChunk(offset: number, data: Uint8Array): Promise<ResultOutcome> {
-    const reply = await this.request(MC_CH.OTA, MC_OP.OTA_CHUNK, concatBytes(u32le(offset), data));
+    const reply = await this.request(
+      MC_CH.OTA,
+      MC_OP.OTA_CHUNK,
+      concatBytes(u32le(offset), data),
+    );
     return outcome(reply.body[0]!);
   }
 
   async otaCommit(): Promise<ResultOutcome> {
-    const reply = await this.request(MC_CH.OTA, MC_OP.OTA_COMMIT, new Uint8Array(0));
+    const reply = await this.request(
+      MC_CH.OTA,
+      MC_OP.OTA_COMMIT,
+      new Uint8Array(0),
+    );
     return outcome(reply.body[0]!);
   }
 
   /** Idempotent — safe to call from any OTA state, including IDLE. */
   async otaAbort(): Promise<ResultOutcome> {
-    const reply = await this.request(MC_CH.OTA, MC_OP.OTA_ABORT, new Uint8Array(0));
+    const reply = await this.request(
+      MC_CH.OTA,
+      MC_OP.OTA_ABORT,
+      new Uint8Array(0),
+    );
     return outcome(reply.body[0]!);
   }
 
@@ -310,12 +474,20 @@ export class MotoClient {
    * otaBegin() (docs/PROTOCOL.md §10.3) — REJECTED leaves the committed
    * image intact for a later retry, it does not lose the transfer. */
   async otaReboot(): Promise<ResultOutcome> {
-    const reply = await this.request(MC_CH.OTA, MC_OP.OTA_REBOOT, new Uint8Array(0));
+    const reply = await this.request(
+      MC_CH.OTA,
+      MC_OP.OTA_REBOOT,
+      new Uint8Array(0),
+    );
     return outcome(reply.body[0]!);
   }
 
   async otaStatus(): Promise<OtaStatus & ResultOutcome> {
-    const reply = await this.request(MC_CH.OTA, MC_OP.OTA_STATUS, new Uint8Array(0));
+    const reply = await this.request(
+      MC_CH.OTA,
+      MC_OP.OTA_STATUS,
+      new Uint8Array(0),
+    );
     const b = reply.body;
     return {
       ...outcome(b[0]!),
@@ -334,12 +506,19 @@ export class MotoClient {
     bundle: FirmwareBundle,
     onProgress?: (sentBytes: number, totalBytes: number) => void,
   ): Promise<ResultOutcome> {
-    const begin = await this.otaBegin(bundle.imageSize, bundle.sha512, bundle.signature);
+    const begin = await this.otaBegin(
+      bundle.imageSize,
+      bundle.sha512,
+      bundle.signature,
+    );
     if (!begin.ok) {
       return begin;
     }
     for (let off = 0; off < bundle.image.length; off += OTA_CHUNK_BYTES) {
-      const chunk = bundle.image.subarray(off, Math.min(off + OTA_CHUNK_BYTES, bundle.image.length));
+      const chunk = bundle.image.subarray(
+        off,
+        Math.min(off + OTA_CHUNK_BYTES, bundle.image.length),
+      );
       const result = await this.otaChunk(off, chunk);
       if (!result.ok) {
         return result;
@@ -357,7 +536,7 @@ export class MotoClient {
    * request (same one-in-flight-per-channel constraint readConfigBytes has
    * on the CONFIG channel above). */
   getEventLog(sinceSeq = 0): Promise<EventRecord[]> {
-    return new Promise<EventRecord[]>((resolve, reject) => {
+    const promise = new Promise<EventRecord[]>((resolve, reject) => {
       const records: EventRecord[] = [];
       let total: number | null = null;
       const timer = setTimeout(() => {
@@ -371,17 +550,23 @@ export class MotoClient {
       };
 
       this.pending.set(MC_CH.COMMAND, {
-        resolve: (frame) => {
+        resolve: frame => {
           if (frame.op !== MC_OP.EVENT_LOG_CHUNK) {
-            fail(new Error(`MotoClient.getEventLog: unexpected reply op 0x${frame.op.toString(16)}`));
+            fail(
+              new Error(
+                `MotoClient.getEventLog: unexpected reply op 0x${frame.op.toString(16)}`,
+              ),
+            );
             return;
           }
           total = readU16le(frame.body, 2);
           const count = frame.body[4]!;
           let pos = 5;
           for (let i = 0; i < count; i++) {
-            const seq = readU32le(frame.body, pos); pos += 4;
-            const uptimeMs = readU32le(frame.body, pos); pos += 4;
+            const seq = readU32le(frame.body, pos);
+            pos += 4;
+            const uptimeMs = readU32le(frame.body, pos);
+            pos += 4;
             const type = frame.body[pos++]!;
             const arg0 = frame.body[pos++]!;
             const arg1 = frame.body[pos++]!;
@@ -399,8 +584,15 @@ export class MotoClient {
         timer,
       });
 
-      this.send(MC_CH.COMMAND, MC_OP.EVENT_LOG_GET, u32le(sinceSeq)).catch((err) => fail(err as Error));
+      this.send(MC_CH.COMMAND, MC_OP.EVENT_LOG_GET, u32le(sinceSeq)).catch(
+        err => fail(err as Error),
+      );
     });
+
+    /* Same reason as waitForReply(): armed before the caller awaits, so a
+     * disconnect landing in that gap would otherwise read as unhandled. */
+    promise.catch(() => {});
+    return promise;
   }
 
   // --- Lock / immobilizer (docs/PROTOCOL.md §11) ---
@@ -409,7 +601,11 @@ export class MotoClient {
    * (!engine_running && !ignition_live) holds; REJECTED otherwise.
    * Idempotent if already LOCKED. */
   async lock(): Promise<ResultOutcome> {
-    const reply = await this.request(MC_CH.COMMAND, MC_OP.LOCK, new Uint8Array(0));
+    const reply = await this.request(
+      MC_CH.COMMAND,
+      MC_OP.LOCK,
+      new Uint8Array(0),
+    );
     const result = outcome(reply.body[1]!);
     this.getStatus().catch(() => {});
     return result;
@@ -421,14 +617,22 @@ export class MotoClient {
    * no app action — this is for a session that was already authenticated
    * before the bike became LOCKED. */
   async unlock(): Promise<ResultOutcome> {
-    const reply = await this.request(MC_CH.COMMAND, MC_OP.UNLOCK, new Uint8Array(0));
+    const reply = await this.request(
+      MC_CH.COMMAND,
+      MC_OP.UNLOCK,
+      new Uint8Array(0),
+    );
     const result = outcome(reply.body[1]!);
     this.getStatus().catch(() => {});
     return result;
   }
 
   async lockGetConfig(): Promise<LockConfig> {
-    const reply = await this.request(MC_CH.COMMAND, MC_OP.LOCK_GET_CONFIG, new Uint8Array(0));
+    const reply = await this.request(
+      MC_CH.COMMAND,
+      MC_OP.LOCK_GET_CONFIG,
+      new Uint8Array(0),
+    );
     const b = reply.body;
     return {
       immobilizerEnabled: b[0] !== 0,
@@ -460,7 +664,11 @@ export class MotoClient {
     body[2] = cfg.ignitionSwitchInput < 0 ? 0xff : cfg.ignitionSwitchInput;
     body.set(u16le(cfg.autoLockGraceMs), 3);
     body.set(u16le(cfg.cheatcodeWindowMs), 5);
-    const reply = await this.request(MC_CH.COMMAND, MC_OP.LOCK_SET_CONFIG, body);
+    const reply = await this.request(
+      MC_CH.COMMAND,
+      MC_OP.LOCK_SET_CONFIG,
+      body,
+    );
     return outcome(reply.body[1]!);
   }
 
@@ -468,7 +676,10 @@ export class MotoClient {
    * salts it — the plaintext sequence never round-trips back over the
    * wire, only this one write. */
   async cheatcodeSet(buttons: number[]): Promise<ResultOutcome> {
-    const body = concatBytes(new Uint8Array([buttons.length]), new Uint8Array(buttons));
+    const body = concatBytes(
+      new Uint8Array([buttons.length]),
+      new Uint8Array(buttons),
+    );
     const reply = await this.request(MC_CH.COMMAND, MC_OP.CHEATCODE_SET, body);
     return outcome(reply.body[1]!);
   }
@@ -477,15 +688,24 @@ export class MotoClient {
    * mandatory fallback can't be removed out from under an active
    * immobilizer) — disable it first. */
   async cheatcodeClear(): Promise<ResultOutcome> {
-    const reply = await this.request(MC_CH.COMMAND, MC_OP.CHEATCODE_CLEAR, new Uint8Array(0));
+    const reply = await this.request(
+      MC_CH.COMMAND,
+      MC_OP.CHEATCODE_CLEAR,
+      new Uint8Array(0),
+    );
     return outcome(reply.body[1]!);
   }
 
   /** Practice mode: pure hash comparison against a candidate sequence, no
    * side effects (never touches the physical entry buffer or the
    * wrong-entry backoff counter). */
-  async cheatcodeTest(buttons: number[]): Promise<{ ok: boolean; match: boolean }> {
-    const body = concatBytes(new Uint8Array([buttons.length]), new Uint8Array(buttons));
+  async cheatcodeTest(
+    buttons: number[],
+  ): Promise<{ ok: boolean; match: boolean }> {
+    const body = concatBytes(
+      new Uint8Array([buttons.length]),
+      new Uint8Array(buttons),
+    );
     const reply = await this.request(MC_CH.COMMAND, MC_OP.CHEATCODE_TEST, body);
     return { ok: reply.body[0] === MC_RESULT.OK, match: reply.body[1] !== 0 };
   }
@@ -496,7 +716,11 @@ export class MotoClient {
    * authenticated. Does not disconnect — the app should treat this as
    * "pairing state reset" and return to the Pairing screen. */
   async transferOwnership(): Promise<ResultOutcome> {
-    const reply = await this.request(MC_CH.COMMAND, MC_OP.TRANSFER_OWNERSHIP, new Uint8Array(0));
+    const reply = await this.request(
+      MC_CH.COMMAND,
+      MC_OP.TRANSFER_OWNERSHIP,
+      new Uint8Array(0),
+    );
     const result = outcome(reply.body[1]!);
     this.getStatus().catch(() => {});
     return result;
@@ -509,7 +733,11 @@ export class MotoClient {
    * math). A channel that isn't actually energized (commanded off, or
    * suppressed by the low-voltage cutoff) always reads 0mA / no fault. */
   async getDiagnostics(): Promise<Diagnostics> {
-    const reply = await this.request(MC_CH.COMMAND, MC_OP.DIAG_GET, new Uint8Array(0));
+    const reply = await this.request(
+      MC_CH.COMMAND,
+      MC_OP.DIAG_GET,
+      new Uint8Array(0),
+    );
     const b = reply.body;
     const channels = [];
     let pos = 1;
@@ -526,7 +754,11 @@ export class MotoClient {
   }
 
   async diagGetConfig(): Promise<DiagConfig> {
-    const reply = await this.request(MC_CH.COMMAND, MC_OP.DIAG_GET_CONFIG, new Uint8Array(0));
+    const reply = await this.request(
+      MC_CH.COMMAND,
+      MC_OP.DIAG_GET_CONFIG,
+      new Uint8Array(0),
+    );
     const b = reply.body;
     const channels = [];
     let pos = 1;
@@ -544,7 +776,13 @@ export class MotoClient {
     const engineRunMv = readU16le(b, pos);
     pos += 2;
     const engineRunHysteresisMv = readU16le(b, pos);
-    return { channels, lvCutoffMv, lvCutoffHysteresisMv, engineRunMv, engineRunHysteresisMv };
+    return {
+      channels,
+      lvCutoffMv,
+      lvCutoffHysteresisMv,
+      engineRunMv,
+      engineRunHysteresisMv,
+    };
   }
 
   /** REJECTED if any channel's openLoadMa >= overcurrentMa (would never be
@@ -560,16 +798,27 @@ export class MotoClient {
       body.set(u16le(cfg.channels[c]!.overcurrentMa), pos);
       pos += 2;
     }
-    body.set(u16le(cfg.lvCutoffMv), pos); pos += 2;
-    body.set(u16le(cfg.lvCutoffHysteresisMv), pos); pos += 2;
-    body.set(u16le(cfg.engineRunMv), pos); pos += 2;
+    body.set(u16le(cfg.lvCutoffMv), pos);
+    pos += 2;
+    body.set(u16le(cfg.lvCutoffHysteresisMv), pos);
+    pos += 2;
+    body.set(u16le(cfg.engineRunMv), pos);
+    pos += 2;
     body.set(u16le(cfg.engineRunHysteresisMv), pos);
-    const reply = await this.request(MC_CH.COMMAND, MC_OP.DIAG_SET_CONFIG, body);
+    const reply = await this.request(
+      MC_CH.COMMAND,
+      MC_OP.DIAG_SET_CONFIG,
+      body,
+    );
     return outcome(reply.body[1]!);
   }
 
   async diagGetCalib(): Promise<DiagCalib> {
-    const reply = await this.request(MC_CH.COMMAND, MC_OP.DIAG_GET_CALIB, new Uint8Array(0));
+    const reply = await this.request(
+      MC_CH.COMMAND,
+      MC_OP.DIAG_GET_CALIB,
+      new Uint8Array(0),
+    );
     const b = reply.body;
     return {
       isGain: readF32le(b, 1),
@@ -600,7 +849,11 @@ export class MotoClient {
    * actually energized right now. Pass DIAG_LEARN_ALL (constants.ts) to
    * learn every currently-energized channel at once. */
   async diagLearn(channel: number): Promise<ResultOutcome> {
-    const reply = await this.request(MC_CH.COMMAND, MC_OP.DIAG_LEARN, new Uint8Array([channel]));
+    const reply = await this.request(
+      MC_CH.COMMAND,
+      MC_OP.DIAG_LEARN,
+      new Uint8Array([channel]),
+    );
     return outcome(reply.body[1]!);
   }
 
@@ -612,6 +865,17 @@ export class MotoClient {
     this.pollTimer = setInterval(() => {
       this.getStatus().catch(() => {});
     }, STATUS_POLL_MS);
+  }
+
+  /** Rejects and clears every armed reply waiter. Each entry's own reject
+   * clears its timer and removes it from `pending`, so this iterates a copy. */
+  private failPending(err: Error): void {
+    const entries = [...this.pending.values()];
+    this.pending.clear();
+    for (const entry of entries) {
+      clearTimeout(entry.timer);
+      entry.reject(err);
+    }
   }
 
   private stopPolling(): void {
@@ -627,38 +891,93 @@ export class MotoClient {
     }
     const op = data[0]!;
     const body = data.subarray(1);
+
+    /* INPUT_EVENT is the one genuinely unsolicited device-to-client frame
+     * (docs/PROTOCOL.md §14.1): it arrives whenever the rider presses a
+     * button, with no request behind it. It must be routed to listeners and
+     * must NOT fall through to the pending-reply resolver below — otherwise a
+     * press landing between a request and its reply would resolve the wrong
+     * promise, and e.g. setOutput() would parse a press event as its
+     * COMMAND_RESULT. */
+    if (channel === MC_CH.COMMAND && op === MC_OP.INPUT_EVENT) {
+      if (body.length >= 3) {
+        const event: InputEvent = {
+          button: body[0]!,
+          pressType: PRESS_TYPE_NAMES[body[1]!] ?? 'short',
+          actionSuppressed: body[2] !== 0,
+        };
+        for (const listener of this.inputEventListeners) {
+          listener(event);
+        }
+      }
+      return;
+    }
+
     const pending = this.pending.get(channel);
     if (pending) {
       pending.resolve({ op, body });
     }
   }
 
-  private send(channel: number, opcode: number, payload: Uint8Array): Promise<void> {
+  private send(
+    channel: number,
+    opcode: number,
+    payload: Uint8Array,
+  ): Promise<void> {
     const frame = new Uint8Array(payload.length + 1);
     frame[0] = opcode;
     frame.set(payload, 1);
     return this.transport.send(channel, frame);
   }
 
-  private waitForReply(channel: number, timeoutMs = REPLY_TIMEOUT_MS): Promise<{ op: number; body: Uint8Array }> {
-    return new Promise((resolve, reject) => {
-      const timer = setTimeout(() => {
-        this.pending.delete(channel);
-        reject(new Error(`MotoClient: timed out waiting for a reply on channel ${channel}`));
-      }, timeoutMs);
-      this.pending.set(channel, {
-        resolve: (frame) => {
-          clearTimeout(timer);
+  private waitForReply(
+    channel: number,
+    timeoutMs = REPLY_TIMEOUT_MS,
+  ): Promise<{ op: number; body: Uint8Array }> {
+    const promise = new Promise<{ op: number; body: Uint8Array }>(
+      (resolve, reject) => {
+        const timer = setTimeout(() => {
           this.pending.delete(channel);
-          resolve(frame);
-        },
-        reject,
-        timer,
-      });
-    });
+          reject(
+            new Error(
+              `MotoClient: timed out waiting for a reply on channel ${channel}`,
+            ),
+          );
+        }, timeoutMs);
+        this.pending.set(channel, {
+          resolve: frame => {
+            clearTimeout(timer);
+            this.pending.delete(channel);
+            resolve(frame);
+          },
+          reject,
+          timer,
+        });
+      },
+    );
+
+    /* Mark the promise handled the instant it exists.
+     *
+     * Callers create the waiter and THEN `await this.send(...)` before
+     * awaiting the waiter itself — see request() and authenticate(). During
+     * that gap the promise has no rejection handler, so a disconnect landing
+     * there (failPending runs synchronously inside the transport's
+     * disconnect listener) rejects a promise nobody is listening to, and the
+     * runtime reports an unhandled rejection even though the caller is about
+     * to await it a microtask later.
+     *
+     * Attaching a no-op handler does not swallow anything: `promise` is still
+     * what we return, so whoever awaits it still receives the rejection. It
+     * only stops the runtime treating the gap as an error. */
+    promise.catch(() => {});
+    return promise;
   }
 
-  private async request(channel: number, opcode: number, payload: Uint8Array): Promise<{ op: number; body: Uint8Array }> {
+  private async request(
+    channel: number,
+    opcode: number,
+    payload: Uint8Array,
+  ): Promise<{ op: number; body: Uint8Array }> {
     const replyPromise = this.waitForReply(channel);
     await this.send(channel, opcode, payload);
     return replyPromise;

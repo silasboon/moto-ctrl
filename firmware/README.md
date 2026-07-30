@@ -149,8 +149,10 @@ The full feature set is implemented and tested:
   attention-pulse burst (opt-in, off by default per `CONTRIBUTING.md`
   safety requirement #5), and opt-in per-channel PWM dimming
   (lazily-attached LEDC on real hardware). Handlebar buttons bind to
-  actions besides the cheat-code (`short_press_action[]` → turn-L/turn-R
-  toggle / hazard press) and a physical brake-lever/pedal switch input
+  actions besides the cheat-code — each of `short_press_action[]`,
+  `long_press_action[]` and `double_press_action[]` holds a per-button LIST
+  of actions (turn-L/turn-R toggle, hazard press, or `256 + N` to toggle
+  output channel N directly) — and a physical brake-lever/pedal switch input
   (`brake_switch_input`, read as a level, mirrors
   `starter_interlock_input`).
 - **OTA + config migration + event log** (`mc_ota`, `mc_event_log`,
@@ -204,7 +206,11 @@ hardware:
   silicon. See `docs/FLASHING.md`'s callout and `docs/HARDWARE_TESTING.md`
   §9.
 
-The generic `combos[]` chord/sequence mechanism still has no action bound
-to it — orthogonal to both the lock cheat-code and the plain
-`short_press_action[]` binding, which both consume short-press events
-independently of the combo matcher.
+The generic `combos[]` chord/sequence mechanism dispatches its own
+`actions` list, orthogonal to the lock cheat-code and to the per-button
+press bindings, which all consume short-press events independently of the
+combo matcher. A matched *chord* additionally marks its member buttons so
+their own bindings don't also fire (the press event is still delivered,
+flagged `action_suppressed`, so the cheat-code can never be starved — see
+`mc_input.h`). A matched *sequence* suppresses nothing, since its member
+presses were already delivered before it completed.

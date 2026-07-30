@@ -286,10 +286,29 @@ static void handle_command(mc_session_t *s, mc_app_t *app,
      * MC_OP_SET_OUTPUT above — mutual exclusion/auto-cancel are embedded in
      * mc_output_set() itself — but hazard genuinely needs its own entry
      * point (see mc_output.h), so it gets its own opcode. */
+    case MC_OP_INPUT_LEARN: {
+        if (body_len < 1) {
+            send_result2(send, io, MC_CH_COMMAND, MC_OP_COMMAND_RESULT, op, MC_RESULT_BAD_REQUEST);
+            return;
+        }
+        /* Pure telemetry toggle — no output, lock or config side effects, so
+         * there is nothing here to gate beyond the channel's existing authed
+         * check. The platform (app_task) is what actually pushes events; it
+         * reads this flag. */
+        s->input_learn = (body[0] != 0);
+        send_result2(send, io, MC_CH_COMMAND, MC_OP_COMMAND_RESULT, op, MC_RESULT_OK);
+        break;
+    }
+
     case MC_OP_HAZARD_PRESS: {
-        int l = mc_output_find_channel_by_function(&app->output->config, MC_OUT_FUNC_TURN_L);
-        int r = mc_output_find_channel_by_function(&app->output->config, MC_OUT_FUNC_TURN_R);
-        if (l < 0 && r < 0) {
+        /* Rejected only when the rider has put nothing in the hazard group
+         * at all — membership is now explicit per channel, not "whichever
+         * two channels happen to be indicators". */
+        bool any_member = false;
+        for (uint8_t ch = 0; ch < MC_OUTPUT_COUNT && !any_member; ch++) {
+            any_member = app->output->config.channels[ch].hazard_member;
+        }
+        if (!any_member) {
             send_result2(send, io, MC_CH_COMMAND, MC_OP_COMMAND_RESULT, op, MC_RESULT_REJECTED);
             return;
         }
@@ -728,6 +747,14 @@ static void config_commit(mc_app_t *app, mc_session_t *s, mc_send_fn send, void 
          * carries its own live copy of the thresholds, separate from the
          * persisted mc_config_t.diagnostics a JSON import just replaced. */
         app->diag->config = incoming.diagnostics;
+    }
+    if (app->input != NULL) {
+        /* Third instance of the same bookkeeping. Missing this is what made
+         * newly configured chords silently do nothing until a reboot: the
+         * combo matcher runs off mc_input's own copy, while per-button
+         * bindings are read from mc_config_t by the platform and so appeared
+         * to work fine. */
+        mc_input_set_config(app->input, &incoming.inputs);
     }
 
     if (app->persist_config != NULL) {

@@ -31,7 +31,9 @@ export interface Transport {
   connect(deviceId: string): Promise<void>;
   disconnect(): Promise<void>;
   getConnectionState(): ConnectionState;
-  onConnectionStateChange(listener: (state: ConnectionState) => void): () => void;
+  onConnectionStateChange(
+    listener: (state: ConnectionState) => void,
+  ): () => void;
 
   /** Send an opcode+payload frame (no channel byte — the transport adds
    * whatever framing its wire needs) on the given logical channel. */

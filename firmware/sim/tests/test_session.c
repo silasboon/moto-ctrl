@@ -213,7 +213,8 @@ static void fixture_init(fixture_t *fx)
  * test_lock.c's fx_enable_with_cheatcode(). */
 static void fx_enable_lock(fixture_t *fx)
 {
-    fx->config.outputs.channels[5].function = MC_OUT_FUNC_IGNITION;
+    fx->config.outputs.channels[5].is_ignition = true;
+    fx->config.outputs.channels[5].essential = true;
     fx->output.config = fx->config.outputs;
 
     mc_lock_config_t cfg;
@@ -285,7 +286,7 @@ static void test_control_rejected_before_auth(void)
 {
     fixture_t fx;
     fixture_init(&fx);
-    fx.config.outputs.channels[0].function = MC_OUT_FUNC_HEADLIGHT_LO;
+    fx.config.outputs.channels[0].essential = true;
     fx.output.config = fx.config.outputs;
 
     mc_session_t s;
@@ -305,7 +306,7 @@ static void test_enroll_tofu_then_auth_then_control(void)
 {
     fixture_t fx;
     fixture_init(&fx);
-    fx.config.outputs.channels[0].function = MC_OUT_FUNC_HEADLIGHT_LO;
+    fx.config.outputs.channels[0].essential = true;
     fx.output.config = fx.config.outputs;
 
     uint8_t pk[MC_CRYPTO_PUBKEY_BYTES], sk[MC_CRYPTO_SECRETKEY_BYTES];
@@ -345,7 +346,7 @@ static void test_starter_rejected_over_ble_even_when_authed(void)
 {
     fixture_t fx;
     fixture_init(&fx);
-    fx.config.outputs.channels[5].function = MC_OUT_FUNC_STARTER;
+    fx.config.outputs.channels[5].is_starter = true;
     fx.output.config = fx.config.outputs;
 
     uint8_t pk[MC_CRYPTO_PUBKEY_BYTES], sk[MC_CRYPTO_SECRETKEY_BYTES];
@@ -394,8 +395,8 @@ static void test_hazard_press_rejected_before_auth(void)
 {
     fixture_t fx;
     fixture_init(&fx);
-    fx.config.outputs.channels[0].function = MC_OUT_FUNC_TURN_L;
-    fx.config.outputs.channels[1].function = MC_OUT_FUNC_TURN_R;
+    fx.config.outputs.channels[0].indicator = MC_INDICATOR_LEFT; fx.config.outputs.channels[0].hazard_member = true;
+    fx.config.outputs.channels[1].indicator = MC_INDICATOR_RIGHT; fx.config.outputs.channels[1].hazard_member = true;
     fx.output.config = fx.config.outputs;
 
     mc_session_t s;
@@ -415,8 +416,8 @@ static void test_hazard_press_toggles_both_when_authed(void)
 {
     fixture_t fx;
     fixture_init(&fx);
-    fx.config.outputs.channels[0].function = MC_OUT_FUNC_TURN_L;
-    fx.config.outputs.channels[1].function = MC_OUT_FUNC_TURN_R;
+    fx.config.outputs.channels[0].indicator = MC_INDICATOR_LEFT; fx.config.outputs.channels[0].hazard_member = true;
+    fx.config.outputs.channels[1].indicator = MC_INDICATOR_RIGHT; fx.config.outputs.channels[1].hazard_member = true;
     fx.output.config = fx.config.outputs;
 
     uint8_t pk[MC_CRYPTO_PUBKEY_BYTES], sk[MC_CRYPTO_SECRETKEY_BYTES];
@@ -571,7 +572,7 @@ static void test_config_read_write_roundtrip_preserves_output_state(void)
 {
     fixture_t fx;
     fixture_init(&fx);
-    fx.config.outputs.channels[0].function = MC_OUT_FUNC_HEADLIGHT_LO;
+    fx.config.outputs.channels[0].essential = true;
     fx.output.config = fx.config.outputs;
 
     uint8_t pk[MC_CRYPTO_PUBKEY_BYTES], sk[MC_CRYPTO_SECRETKEY_BYTES];
@@ -598,16 +599,16 @@ static void test_config_read_write_roundtrip_preserves_output_state(void)
     assert(json_len > 0);
     mc_config_t parsed;
     assert(mc_config_from_json((const char *)jsonbuf, json_len, &parsed) == MC_CONFIG_OK);
-    assert(parsed.outputs.channels[0].function == MC_OUT_FUNC_HEADLIGHT_LO);
+    assert(parsed.outputs.channels[0].essential);
 
     /* Build a NEW config (rename channel 0, add a horn) and write it back
      * chunked. commanded_on in the JSON is false, but the live ON state
      * must be preserved after commit. */
     mc_config_t newcfg;
     mc_config_default(&newcfg);
-    newcfg.outputs.channels[0].function = MC_OUT_FUNC_HEADLIGHT_LO;
+    newcfg.outputs.channels[0].essential = true;
     strcpy(newcfg.outputs.channels[0].name, "Low Beam");
-    newcfg.outputs.channels[1].function = MC_OUT_FUNC_HORN;
+    newcfg.outputs.channels[1].behaviour = MC_OUT_BEHAVIOUR_TOGGLE;
     char *newjson = mc_config_to_json(&newcfg);
     size_t newlen = strlen(newjson);
 
@@ -635,7 +636,7 @@ static void test_config_read_write_roundtrip_preserves_output_state(void)
     assert(wr != NULL && wr->data[1] == MC_RESULT_OK);
 
     /* New config applied... */
-    assert(fx.config.outputs.channels[1].function == MC_OUT_FUNC_HORN);
+    assert((fx.config.outputs.channels[1].behaviour == MC_OUT_BEHAVIOUR_TOGGLE));
     assert(strcmp(fx.config.outputs.channels[0].name, "Low Beam") == 0);
     /* ...but the live output state was preserved (not toggled by import). */
     assert(mc_output_get_state(&fx.output, 0) == true);
@@ -654,7 +655,7 @@ static void test_config_write_preserves_imported_mode_not_just_on_off(void)
      * never toggle outputs). */
     fixture_t fx;
     fixture_init(&fx);
-    fx.config.outputs.channels[0].function = MC_OUT_FUNC_TURN_L;
+    fx.config.outputs.channels[0].indicator = MC_INDICATOR_LEFT; fx.config.outputs.channels[0].hazard_member = true;
     fx.output.config = fx.config.outputs;
 
     uint8_t pk[MC_CRYPTO_PUBKEY_BYTES], sk[MC_CRYPTO_SECRETKEY_BYTES];
@@ -674,8 +675,8 @@ static void test_config_write_preserves_imported_mode_not_just_on_off(void)
 
     mc_config_t newcfg;
     mc_config_default(&newcfg);
-    newcfg.outputs.channels[0].function = MC_OUT_FUNC_TURN_L;
-    newcfg.outputs.channels[0].mode = MC_OUT_MODE_FLASH_TURN; /* the point of this import */
+    newcfg.outputs.channels[0].indicator = MC_INDICATOR_LEFT; newcfg.outputs.channels[0].hazard_member = true;
+    newcfg.outputs.channels[0].behaviour = MC_OUT_BEHAVIOUR_BLINK; /* the point of this import */
     char *newjson = mc_config_to_json(&newcfg);
     size_t newlen = strlen(newjson);
 
@@ -697,7 +698,7 @@ static void test_config_write_preserves_imported_mode_not_just_on_off(void)
     const rec_frame_t *wr = last_frame(&rec, MC_CH_CONFIG, MC_OP_CONFIG_WRITE_RESULT);
     assert(wr != NULL && wr->data[1] == MC_RESULT_OK);
 
-    assert(fx.config.outputs.channels[0].mode == MC_OUT_MODE_FLASH_TURN); /* imported mode survives */
+    assert(fx.config.outputs.channels[0].behaviour == MC_OUT_BEHAVIOUR_BLINK); /* imported behaviour survives */
     assert(mc_output_get_state(&fx.output, 0) == true);                  /* live on/off state still preserved */
 
     mc_config_json_free(newjson);
@@ -719,8 +720,8 @@ static void test_config_write_rejects_invalid_config(void)
     /* Two ignition channels -> validation must reject on commit. */
     mc_config_t bad;
     mc_config_default(&bad);
-    bad.outputs.channels[0].function = MC_OUT_FUNC_IGNITION;
-    bad.outputs.channels[1].function = MC_OUT_FUNC_IGNITION;
+    bad.outputs.channels[0].is_ignition = true; bad.outputs.channels[0].essential = true;
+    bad.outputs.channels[1].is_ignition = true; bad.outputs.channels[1].essential = true;
     char *json = mc_config_to_json(&bad);
     size_t len = strlen(json);
 
@@ -1086,6 +1087,105 @@ static void test_transfer_ownership_logs_event_and_wipes_log(void)
     assert(mc_keystore_count(&fx.keystore) == 0);
 }
 
+/* --- MC_OP_INPUT_LEARN (button-identification learn mode) --- */
+
+static void enroll_and_auth(mc_session_t *s, fixture_t *fx, recorder_t *rec,
+                            uint8_t sk_out[MC_CRYPTO_SECRETKEY_BYTES])
+{
+    uint8_t pk[MC_CRYPTO_PUBKEY_BYTES];
+    mc_crypto_keypair(pk, sk_out);
+    uint8_t enroll[1 + MC_CRYPTO_PUBKEY_BYTES + 5];
+    enroll[0] = MC_OP_ENROLL;
+    memcpy(enroll + 1, pk, MC_CRYPTO_PUBKEY_BYTES);
+    memcpy(enroll + 1 + MC_CRYPTO_PUBKEY_BYTES, "Phone", 5);
+    mc_session_handle(s, &fx->app, MC_CH_AUTH, enroll, sizeof(enroll), rec_send, rec);
+    do_auth(s, &fx->app, sk_out, rec);
+    assert(mc_session_is_authed(s));
+}
+
+static void test_input_learn_toggles_and_defaults_off(void)
+{
+    fixture_t fx;
+    fixture_init(&fx);
+    mc_session_t s;
+    mc_session_init(&s);
+    recorder_t rec = {0};
+    uint8_t sk[MC_CRYPTO_SECRETKEY_BYTES];
+    enroll_and_auth(&s, &fx, &rec, sk);
+
+    /* Off until explicitly asked for — the board must not stream input
+     * events for a whole ride by default (AGENTS.md #7). */
+    assert(s.input_learn == false);
+
+    rec_reset(&rec);
+    uint8_t on[2] = { MC_OP_INPUT_LEARN, 1 };
+    mc_session_handle(&s, &fx.app, MC_CH_COMMAND, on, sizeof(on), rec_send, &rec);
+    const rec_frame_t *r = last_frame(&rec, MC_CH_COMMAND, MC_OP_COMMAND_RESULT);
+    assert(r != NULL && r->data[2] == MC_RESULT_OK);
+    assert(s.input_learn == true);
+
+    rec_reset(&rec);
+    uint8_t off[2] = { MC_OP_INPUT_LEARN, 0 };
+    mc_session_handle(&s, &fx.app, MC_CH_COMMAND, off, sizeof(off), rec_send, &rec);
+    r = last_frame(&rec, MC_CH_COMMAND, MC_OP_COMMAND_RESULT);
+    assert(r != NULL && r->data[2] == MC_RESULT_OK);
+    assert(s.input_learn == false);
+}
+
+static void test_input_learn_rejected_before_auth(void)
+{
+    fixture_t fx;
+    fixture_init(&fx);
+    mc_session_t s;
+    mc_session_init(&s);
+    recorder_t rec = {0};
+
+    uint8_t on[2] = { MC_OP_INPUT_LEARN, 1 };
+    mc_session_handle(&s, &fx.app, MC_CH_COMMAND, on, sizeof(on), rec_send, &rec);
+    const rec_frame_t *r = last_frame(&rec, MC_CH_COMMAND, MC_OP_COMMAND_RESULT);
+    assert(r != NULL && r->data[2] == MC_RESULT_UNAUTHENTICATED);
+    assert(s.input_learn == false);
+}
+
+static void test_input_learn_bad_request_without_payload(void)
+{
+    fixture_t fx;
+    fixture_init(&fx);
+    mc_session_t s;
+    mc_session_init(&s);
+    recorder_t rec = {0};
+    uint8_t sk[MC_CRYPTO_SECRETKEY_BYTES];
+    enroll_and_auth(&s, &fx, &rec, sk);
+
+    rec_reset(&rec);
+    uint8_t bare = MC_OP_INPUT_LEARN; /* no enable byte */
+    mc_session_handle(&s, &fx.app, MC_CH_COMMAND, &bare, 1, rec_send, &rec);
+    const rec_frame_t *r = last_frame(&rec, MC_CH_COMMAND, MC_OP_COMMAND_RESULT);
+    assert(r != NULL && r->data[2] == MC_RESULT_BAD_REQUEST);
+    assert(s.input_learn == false);
+}
+
+/* Learn mode must never survive the link: mc_session_init() is what runs on
+ * a new connection, so it has to clear the flag. */
+static void test_input_learn_cleared_by_session_init(void)
+{
+    fixture_t fx;
+    fixture_init(&fx);
+    mc_session_t s;
+    mc_session_init(&s);
+    recorder_t rec = {0};
+    uint8_t sk[MC_CRYPTO_SECRETKEY_BYTES];
+    enroll_and_auth(&s, &fx, &rec, sk);
+
+    uint8_t on[2] = { MC_OP_INPUT_LEARN, 1 };
+    mc_session_handle(&s, &fx.app, MC_CH_COMMAND, on, sizeof(on), rec_send, &rec);
+    assert(s.input_learn == true);
+
+    mc_session_init(&s); /* simulates reconnect */
+    assert(s.input_learn == false);
+    assert(!mc_session_is_authed(&s));
+}
+
 int main(void)
 {
     test_status_readable_without_auth();
@@ -1110,5 +1210,9 @@ int main(void)
     test_event_log_get_rejected_when_unavailable();
     test_lock_engage_logs_event();
     test_transfer_ownership_logs_event_and_wipes_log();
+    test_input_learn_toggles_and_defaults_off();
+    test_input_learn_rejected_before_auth();
+    test_input_learn_bad_request_without_payload();
+    test_input_learn_cleared_by_session_init();
     return 0;
 }

@@ -13,10 +13,14 @@ void mc_input_config_default(mc_input_config_t *out)
     out->timing.long_press_ms = DEFAULT_LONG_PRESS_MS;
     out->timing.double_press_gap_ms = DEFAULT_DOUBLE_PRESS_GAP_MS;
     out->combo_count = 0;
+    /* memset above already zeroed the action lists (count 0 == unbound) and
+     * the name strings (empty == unnamed); spelled out here so the intent
+     * survives someone adding a non-zero-default field later. */
     for (int i = 0; i < MC_INPUT_COUNT; i++) {
-        out->short_press_action[i] = MC_ACTION_NONE;
-        out->long_press_action[i] = MC_ACTION_NONE;
-        out->double_press_action[i] = MC_ACTION_NONE;
+        out->short_press_actions[i].count = 0;
+        out->long_press_actions[i].count = 0;
+        out->double_press_actions[i].count = 0;
+        out->names[i][0] = '\0';
     }
 }
 
@@ -24,6 +28,20 @@ void mc_input_init(mc_input_engine_t *eng, const mc_input_config_t *config)
 {
     memset(eng, 0, sizeof(*eng));
     eng->config = *config;
+}
+
+void mc_input_set_config(mc_input_engine_t *eng, const mc_input_config_t *config)
+{
+    eng->config = *config;
+    /* Stale matcher progress could index a combo definition that no longer
+     * exists or has a different length — see mc_input.h. */
+    memset(eng->combo_state, 0, sizeof(eng->combo_state));
+    /* Chord membership may have changed, so a leftover suppression flag would
+     * silently swallow the next binding on that button. Only this flag is
+     * cleared; the debounce/hold fields around it must survive. */
+    for (uint8_t b = 0; b < MC_INPUT_COUNT; b++) {
+        eng->buttons[b].chord_consumed = false;
+    }
 }
 
 static void enqueue(mc_input_engine_t *eng, mc_input_event_t evt)
@@ -57,12 +75,44 @@ bool mc_input_button_level(const mc_input_engine_t *eng, uint8_t button)
     return eng->buttons[button].stable_state;
 }
 
+bool mc_input_hold_active(const mc_input_engine_t *eng, uint8_t button)
+{
+    if (button >= MC_INPUT_COUNT) {
+        return false;
+    }
+    /* long_press_fired is set when the threshold is crossed and cleared on
+     * the next press-down, so ANDing it with the live level gives exactly
+     * "the hold gesture is happening right now". */
+    return eng->buttons[button].stable_state && eng->buttons[button].long_press_fired;
+}
+
+bool mc_input_chord_held(const mc_input_engine_t *eng, uint8_t combo_index)
+{
+    if (combo_index >= MC_COMBO_MAX_DEFS || combo_index >= eng->config.combo_count) {
+        return false;
+    }
+    const mc_combo_def_t *def = &eng->config.combos[combo_index];
+    if (def->type != MC_COMBO_CHORD || def->length == 0) {
+        return false;
+    }
+    for (uint8_t k = 0; k < def->length; k++) {
+        uint8_t btn = def->buttons[k];
+        if (btn >= MC_INPUT_COUNT || !eng->buttons[btn].stable_state) {
+            return false;
+        }
+    }
+    return true;
+}
+
 static void emit_press(mc_input_engine_t *eng, uint8_t button, mc_press_event_type_t type)
 {
     mc_input_event_t evt = {0};
     evt.kind = MC_INPUT_EVT_PRESS;
     evt.data.press.button = button;
     evt.data.press.type = type;
+    /* Emitted either way — only the action binding is suppressed. See
+     * mc_input.h: the cheat-code must keep seeing these presses. */
+    evt.data.press.action_suppressed = eng->buttons[button].chord_consumed;
     enqueue(eng, evt);
 }
 
@@ -71,7 +121,7 @@ static void emit_combo(mc_input_engine_t *eng, uint8_t combo_index)
     mc_input_event_t evt = {0};
     evt.kind = MC_INPUT_EVT_COMBO;
     evt.data.combo.combo_index = combo_index;
-    evt.data.combo.action_id = eng->config.combos[combo_index].action_id;
+    evt.data.combo.actions = eng->config.combos[combo_index].actions;
     enqueue(eng, evt);
 }
 
@@ -141,6 +191,19 @@ static void handle_chord_state(mc_input_engine_t *eng)
         }
 
         if (!st->chord_fired && (max_start - min_start) <= def->window_ms) {
+            /* Mark members before emitting so any press of theirs that
+             * resolves later carries action_suppressed — the chord fires on
+             * press-down, which is always earlier than a short press
+             * (deferred by double_press_gap_ms) or a long press (fired at
+             * long_press_ms). Chord-only: a matched SEQUENCE cannot suppress
+             * its members retroactively, because their press events were
+             * already delivered on earlier polls. */
+            for (uint8_t k = 0; k < def->length; k++) {
+                uint8_t btn = def->buttons[k];
+                if (btn < MC_INPUT_COUNT) {
+                    eng->buttons[btn].chord_consumed = true;
+                }
+            }
             emit_combo(eng, i);
             st->chord_fired = true;
         }
@@ -161,9 +224,13 @@ void mc_input_poll(mc_input_engine_t *eng, uint32_t now_ms, const bool raw_press
             st->stable_state = st->raw_state;
 
             if (st->stable_state) {
-                /* Debounced press-down. */
+                /* Debounced press-down. A fresh press is a fresh gesture:
+                 * clear any chord suppression left over from the previous
+                 * one, so releasing and re-pressing a chord member binds
+                 * normally again. */
                 st->press_start_ms = now_ms;
                 st->long_press_fired = false;
+                st->chord_consumed = false;
             } else {
                 /* Debounced release. */
                 if (!st->long_press_fired) {

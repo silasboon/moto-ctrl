@@ -32,6 +32,62 @@ CONFIG_BT_NIMBLE_SM_SC=y
 # --- App rollback support (OTA, phase 8) ---
 CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y
 
+# CONFIG_BT_NIMBLE_HS_PVCY intentionally left at its Kconfig default (y).
+# It was disabled here as a diagnostic while bisecting `assert failed:
+# vTaskGenericNotifyGiveFromISR`. RESOLVED: that crash was never a NimBLE or
+# esp_timer bug. app_main() overflowed the main task stack (mc_config_load()
+# alone had a 4160-byte frame vs CONFIG_ESP_MAIN_TASK_STACK_SIZE) and
+# scribbled over the adjacent heap block — the esp_timer task's TCB — which
+# only surfaced later, from the timer alarm ISR. Fixed by heap-allocating
+# those buffers (mc_config.c, nvs_keystore_hal.c, nvs_lock_hal.c). HS_PVCY
+# was a red herring: it just happened to be the first esp_timer user to
+# touch the corrupted TCB.
+
+# --- Stack sizing / overflow detection ---
+# The bug above was silent because a canary at the stack's end is only
+# checked on context switch, and an ISR taking a frame below an already
+# blown SP never touches it. The watchpoint traps the overflowing write
+# itself, at the instruction that does it. Keep this on: a stack overflow
+# must fail loudly at its source, not corrupt an unrelated task (AGENTS.md #1).
+CONFIG_FREERTOS_WATCHPOINT_END_OF_STACK=y
+# Headroom for app_main()'s NVS/flash init chain now that the multi-KB
+# buffers are off the stack.
+CONFIG_ESP_MAIN_TASK_STACK_SIZE=4096
+
+# The NimBLE host task runs the Ed25519 challenge-response verify inline
+# (chr_access -> mc_session_handle -> handle_auth ->
+# mc_keystore_find_verifying -> mc_crypto_verify -> tweetnacl), and
+# tweetnacl is extremely stack-hungry: measured with -fstack-usage, the
+# deepest verify path is crypto_sign_ed25519_tweet_open(1168) +
+# scalarbase(544) + scalarmult(32) + add(1200) + M(288) = 3232 bytes on top
+# of 1408 bytes of our own frames and ~1232 bytes of NimBLE's own depth down
+# to chr_access — ~5.9KB worst case. The 4096 default overflowed on the
+# first real app pairing attempt. Do not lower this without re-measuring the
+# tweetnacl chain; a stack overflow here is remotely reachable.
+CONFIG_BT_NIMBLE_HOST_TASK_STACK_SIZE=8192
+
+# --- NimBLE mbuf pool ---
+# Sized for the worst-case CONFIG_READ burst. config_send_read()
+# (mc_session.c) emits the whole config as back-to-back CONFIG_CHUNK
+# notifications with no flow control: 128-byte payloads in 133-byte frames,
+# one msys block each at the 256-byte default block size. A maxed-out
+# schema-v4 config measures 3729 bytes (see mc_config_json.h) = 30 chunks,
+# and a typical named-and-bound one is ~18.
+#
+# The stock count of 12 was therefore always marginal — it only worked when
+# the controller drained frames faster than the host task queued them, which
+# is a race, not a guarantee. Growing the config past ~17 chunks tipped it
+# over and chunks began vanishing silently, surfacing only as
+# "MotoClient.configRead: timed out" in the app with nothing on the device.
+# 48 blocks covers the worst case with headroom for concurrent STATUS and
+# INPUT_EVENT traffic, at a cost of 48 x 256 = 12KB.
+#
+# NOTE: this makes the burst fit; it is not real backpressure. The host task
+# cannot busy-wait for mbufs (it is the task that frees them, so waiting
+# deadlocks), so a proper fix means chunk-at-a-time pull or gap re-request in
+# the protocol. Until then, ble_send() logs loudly on exhaustion.
+CONFIG_BT_NIMBLE_MSYS1_BLOCK_COUNT=48
+
 # --- Watchdogs ---
 CONFIG_ESP_TASK_WDT_EN=y
 CONFIG_ESP_TASK_WDT_PANIC=y

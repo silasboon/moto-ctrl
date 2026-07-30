@@ -126,6 +126,26 @@ typedef enum {
  * simulator-only SIM_OP_GET_LOG/SIM_OP_LOG_ENTRY debug trace
  * (firmware/sim/src/sim_protocol.h) — that channel never reaches real
  * hardware or this app; this one does. */
+/* Button-identification ("which input is this switch wired to?") learn mode.
+ *
+ * While enabled on a session, every debounced press on any of the 8 inputs is
+ * pushed to that session as MC_OP_INPUT_EVENT, so the app can say "you just
+ * pressed input 5" and let the rider name it. Enabling does not change how
+ * inputs are dispatched — bindings still fire normally; this is pure
+ * telemetry alongside them.
+ *
+ * Deliberately opt-in and per-session, never on by default: the board must
+ * not notify on every handlebar press for the whole of a ride (radio +
+ * battery discipline, AGENTS.md #7). State lives in the session, so it dies
+ * with the BLE link and needs no timeout — a disconnect always ends it. */
+#define MC_OP_INPUT_LEARN 0x12      /* client->device: [enable:1] */
+/* device->client, unsolicited while learn mode is on:
+ *   [button:1][press_type:1][action_suppressed:1]
+ * press_type is mc_press_event_type_t (0=short, 1=long, 2=double).
+ * action_suppressed is 1 when a chord consumed this press, so the UI can
+ * explain why a binding didn't fire. */
+#define MC_OP_INPUT_EVENT 0x92
+
 #define MC_OP_EVENT_LOG_GET 0x11    /* client->device: [since_seq:u32le] (0 = oldest available) */
 /* device->client, one or more frames: [index:u16le][total:u16le][count:1]
  * then count * 12-byte mc_event_record_t entries, oldest-first. An empty

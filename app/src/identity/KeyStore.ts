@@ -43,7 +43,10 @@ export async function loadOrCreateIdentity(): Promise<Identity> {
     };
   }
   const kp = nacl.sign.keyPair();
-  const identity: Identity = { keypair: { publicKey: kp.publicKey, secretKey: kp.secretKey }, label: DEFAULT_LABEL };
+  const identity: Identity = {
+    keypair: { publicKey: kp.publicKey, secretKey: kp.secretKey },
+    label: DEFAULT_LABEL,
+  };
   await saveIdentity(identity);
   return identity;
 }

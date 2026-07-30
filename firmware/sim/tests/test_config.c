@@ -55,9 +55,9 @@ static void test_json_round_trip_through_load_save(void)
 {
     mc_config_t cfg;
     mc_config_default(&cfg);
-    cfg.outputs.channels[3].function = MC_OUT_FUNC_BRAKE;
+    cfg.outputs.channels[3].is_brake = true; cfg.outputs.channels[3].essential = true;
     strcpy(cfg.outputs.channels[3].name, "Brake Light");
-    cfg.inputs.short_press_action[2] = 77;
+    cfg.inputs.short_press_actions[2] = (mc_action_list_t){ .actions = { 77 }, .count = 1 };
 
     mem_store_t store = {0};
     mc_config_store_hal_t hal = { .load = mem_load, .save = mem_save, .ctx = &store };
@@ -107,7 +107,7 @@ static void test_save_then_load_round_trips_through_store(void)
 
     mc_config_t cfg;
     mc_config_default(&cfg);
-    cfg.outputs.channels[0].function = MC_OUT_FUNC_IGNITION;
+    cfg.outputs.channels[0].is_ignition = true; cfg.outputs.channels[0].essential = true;
     cfg.outputs.channels[0].commanded_on = true;
 
     assert(mc_config_save(hal, &cfg) == MC_CONFIG_OK);

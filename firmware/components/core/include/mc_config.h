@@ -33,7 +33,7 @@
 #include "mc_input.h"
 #include "mc_output.h"
 
-#define MC_CONFIG_SCHEMA_VERSION 3
+#define MC_CONFIG_SCHEMA_VERSION 6
 
 typedef struct {
     uint16_t schema_version;

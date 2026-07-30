@@ -81,18 +81,59 @@ static uint16_t handle_for_channel(mc_channel_t ch)
 
 /* Send callback: notify the characteristic matching the channel. `io` is the
  * connection handle boxed in a pointer. */
+/* Never fail silently here. A dropped notification looks like nothing at all
+ * on the device and like an unexplained timeout in the app — exactly the
+ * shape of the `configRead: timed out` bug: config_send_read() pushes ~17
+ * back-to-back CONFIG_CHUNK frames with no flow control, and once the NimBLE
+ * msys pool ran dry, ble_hs_mbuf_from_flat() returned NULL and the chunk
+ * vanished without a trace. The pool is now sized for the worst-case burst
+ * (see CONFIG_BT_NIMBLE_MSYS1_BLOCK_COUNT in sdkconfig.defaults), but if it
+ * ever runs dry again this has to say so out loud. */
 static void ble_send(void *io, mc_channel_t ch, const uint8_t *data, size_t len)
 {
     uint16_t conn_handle = (uint16_t)(uintptr_t)io;
     uint16_t attr_handle = handle_for_channel(ch);
     if (attr_handle == 0) {
+        ESP_LOGE(TAG, "send on channel %d with no attr handle registered", (int)ch);
         return;
     }
     struct os_mbuf *om = ble_hs_mbuf_from_flat(data, len);
     if (om == NULL) {
+        ESP_LOGE(TAG, "mbuf pool exhausted; DROPPED %u bytes on channel %d "
+                      "(raise CONFIG_BT_NIMBLE_MSYS1_BLOCK_COUNT)",
+                 (unsigned)len, (int)ch);
         return;
     }
-    ble_gatts_notify_custom(conn_handle, attr_handle, om);
+    /* notify_custom takes ownership of `om` and frees it on every path,
+     * including its own error paths — do not free it here. */
+    int rc = ble_gatts_notify_custom(conn_handle, attr_handle, om);
+    if (rc != 0) {
+        ESP_LOGE(TAG, "notify failed rc=%d; DROPPED %u bytes on channel %d",
+                 rc, (unsigned)len, (int)ch);
+    }
+}
+
+void gatt_svr_push_input_event(uint8_t button, uint8_t press_type, bool action_suppressed)
+{
+    const uint8_t frame[4] = {
+        MC_OP_INPUT_EVENT,
+        button,
+        press_type,
+        (uint8_t)(action_suppressed ? 1 : 0),
+    };
+    for (int i = 0; i < MC_BLE_MAX_SESSIONS; i++) {
+        if (!s_sessions[i].active || !s_sessions[i].session.input_learn) {
+            continue;
+        }
+        /* input_learn can only be set on an authenticated session
+         * (mc_session.c gates the whole COMMAND channel), but re-check
+         * rather than rely on that invariant holding across future edits. */
+        if (!mc_session_is_authed(&s_sessions[i].session)) {
+            continue;
+        }
+        ble_send((void *)(uintptr_t)s_sessions[i].conn_handle, MC_CH_COMMAND,
+                 frame, sizeof(frame));
+    }
 }
 
 static void dispatch_write(uint16_t conn_handle, mc_channel_t ch, const uint8_t *data, size_t len)

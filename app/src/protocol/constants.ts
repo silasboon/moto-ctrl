@@ -55,6 +55,12 @@ export const MC_OP = {
 
   // Event log, on the COMMAND channel (docs/PROTOCOL.md §15).
   EVENT_LOG_GET: 0x11,
+  /* Button-identification learn mode (docs/PROTOCOL.md §14.1). INPUT_EVENT
+   * is unsolicited: it can arrive between any other COMMAND request and its
+   * reply, so a client must not treat an unexpected frame as a protocol
+   * error. */
+  INPUT_LEARN: 0x12,
+  INPUT_EVENT: 0x92,
   EVENT_LOG_CHUNK: 0x91,
 
   // Lock/immobilizer, all on the COMMAND channel (docs/PROTOCOL.md §11).
@@ -161,7 +167,8 @@ export const MCOTA_HEADER_BYTES = 140;
  * then it's a placeholder, same doctrine as mc_ota_release_key.c's
  * placeholder public key on the firmware side — a value with no real
  * release behind it yet is safer than guessing at one. */
-export const UPDATE_MANIFEST_URL = 'https://github.com/silasboon/moto-ctrl/releases/latest/download/manifest.json';
+export const UPDATE_MANIFEST_URL =
+  'https://github.com/silasboon/moto-ctrl/releases/latest/download/manifest.json';
 
 /** MC_LOCK_METHOD_* wire bits for lock config's methods_mask (mc_protocol.h).
  * The button cheat-code is not a bit here — it's always active whenever
@@ -208,7 +215,11 @@ export const LOCK_STATE = {
 
 export const AUTH_CONTEXT = 'moto-ctrl-auth-v1';
 export const AUTH_CONTEXT_LEN = 17;
-export const CONFIG_JSON_MAX = 4096;
+/* Must track MC_CONFIG_JSON_MAX in
+ * firmware/components/core/include/mc_config_json.h — that header carries
+ * the measured size accounting. If this is smaller, the app refuses config
+ * writes the device would have accepted. */
+export const CONFIG_JSON_MAX = 6144;
 export const CONFIG_CHUNK_BYTES = 128;
 export const OUTPUT_COUNT = 12;
 export const INPUT_COUNT = 8;
@@ -232,11 +243,26 @@ export interface ChannelGatt {
 /** Service/characteristic UUID pairs per channel, from docs/PROTOCOL.md §2's
  * table (service XX, characteristic XX). */
 export const CHANNEL_GATT: Record<number, ChannelGatt> = {
-  [MC_CH.STATUS]: { service: channelUuid(0x10), characteristic: channelUuid(0x11) },
-  [MC_CH.AUTH]: { service: channelUuid(0x20), characteristic: channelUuid(0x21) },
-  [MC_CH.COMMAND]: { service: channelUuid(0x20), characteristic: channelUuid(0x22) },
-  [MC_CH.CONFIG]: { service: channelUuid(0x30), characteristic: channelUuid(0x31) },
-  [MC_CH.OTA]: { service: channelUuid(0x40), characteristic: channelUuid(0x41) },
+  [MC_CH.STATUS]: {
+    service: channelUuid(0x10),
+    characteristic: channelUuid(0x11),
+  },
+  [MC_CH.AUTH]: {
+    service: channelUuid(0x20),
+    characteristic: channelUuid(0x21),
+  },
+  [MC_CH.COMMAND]: {
+    service: channelUuid(0x20),
+    characteristic: channelUuid(0x22),
+  },
+  [MC_CH.CONFIG]: {
+    service: channelUuid(0x30),
+    characteristic: channelUuid(0x31),
+  },
+  [MC_CH.OTA]: {
+    service: channelUuid(0x40),
+    characteristic: channelUuid(0x41),
+  },
 };
 
 export const DEVICE_NAME = 'MOTO-CTRL';

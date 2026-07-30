@@ -31,8 +31,9 @@ static void hal_noop(uint8_t channel, bool on, void *ctx)
 static void fx_init_outputs(lock_fixture_t *fx)
 {
     mc_output_config_default(&fx->out_cfg);
-    fx->out_cfg.channels[5].function = MC_OUT_FUNC_IGNITION;
-    fx->out_cfg.channels[6].function = MC_OUT_FUNC_STARTER;
+    fx->out_cfg.channels[5].is_ignition = true;
+    fx->out_cfg.channels[5].essential = true;
+    fx->out_cfg.channels[6].is_starter = true;
     mc_output_hal_t hal = { .set = hal_noop, .ctx = NULL };
     mc_output_init(&fx->output, &fx->out_cfg, hal);
 }
@@ -96,7 +97,7 @@ static void test_config_validate(void)
 
     cfg.cheatcode_set = true;
     cfg.cheatcode_len = 4;
-    out.channels[5].function = MC_OUT_FUNC_IGNITION;
+    out.channels[5].is_ignition = true; out.channels[5].essential = true;
     assert(mc_lock_config_validate(&cfg, &out) == MC_LOCK_CFG_OK);
 
     cfg.methods_mask = MC_LOCK_METHOD_IGNITION_SWITCH;
@@ -681,8 +682,8 @@ static void test_output_blocks_ignition_and_starter_while_immobilized(void)
 {
     mc_output_config_t cfg;
     mc_output_config_default(&cfg);
-    cfg.channels[5].function = MC_OUT_FUNC_IGNITION;
-    cfg.channels[6].function = MC_OUT_FUNC_STARTER;
+    cfg.channels[5].is_ignition = true; cfg.channels[5].essential = true;
+    cfg.channels[6].is_starter = true;
     mc_output_hal_t hal = { .set = hal_noop, .ctx = NULL };
     mc_output_engine_t eng;
     mc_output_init(&eng, &cfg, hal);
@@ -697,8 +698,8 @@ static void test_output_blocks_ignition_and_starter_while_immobilized(void)
     assert(mc_output_set(&eng, 5, false, MC_OUT_SRC_LOCAL) == MC_OUT_OK);
 
     /* A non-ignition/starter channel is unaffected. */
-    cfg.channels[0].function = MC_OUT_FUNC_HORN;
-    eng.config.channels[0].function = MC_OUT_FUNC_HORN;
+    cfg.channels[0].behaviour = MC_OUT_BEHAVIOUR_TOGGLE;
+    eng.config.channels[0].behaviour = MC_OUT_BEHAVIOUR_TOGGLE;
     assert(mc_output_set(&eng, 0, true, MC_OUT_SRC_REMOTE) == MC_OUT_OK);
 
     mc_output_set_immobilized(&eng, false);
@@ -710,7 +711,7 @@ static void test_find_ignition_channel(void)
     mc_output_config_t cfg;
     mc_output_config_default(&cfg);
     assert(mc_output_find_ignition_channel(&cfg) == -1);
-    cfg.channels[8].function = MC_OUT_FUNC_IGNITION;
+    cfg.channels[8].is_ignition = true; cfg.channels[8].essential = true;
     assert(mc_output_find_ignition_channel(&cfg) == 8);
 }
 
@@ -792,7 +793,8 @@ static void sfx_init(session_fixture_t *fx)
 {
     memset(fx, 0, sizeof(*fx));
     mc_config_default(&fx->config);
-    fx->config.outputs.channels[5].function = MC_OUT_FUNC_IGNITION;
+    fx->config.outputs.channels[5].is_ignition = true;
+    fx->config.outputs.channels[5].essential = true;
     mc_keystore_init(&fx->keystore);
     mc_output_hal_t hal = { .set = NULL, .ctx = NULL };
     mc_output_init(&fx->output, &fx->config.outputs, hal);

@@ -173,7 +173,7 @@ static void test_lv_cutoff_suppressed_channel_never_faulted(void)
      * not an open-load fault just because the cutoff turned it off. */
     diag_fixture_t fx;
     fx_init(&fx);
-    fx.out_cfg.channels[0].function = MC_OUT_FUNC_HORN; /* non-essential */
+    fx.out_cfg.channels[0].behaviour = MC_OUT_BEHAVIOUR_TOGGLE; /* non-essential */
     /* re-init output with the updated function assignment */
     mc_output_hal_t ohal = { .set = hal_noop, .ctx = NULL };
     mc_output_init(&fx.output, &fx.out_cfg, ohal);
@@ -196,8 +196,8 @@ static void test_flash_turn_off_phase_never_faulted(void)
      * comment: it accounts for blink phase, not just commanded_on. */
     diag_fixture_t fx;
     fx_init(&fx);
-    fx.out_cfg.channels[0].function = MC_OUT_FUNC_TURN_L;
-    fx.out_cfg.channels[0].mode = MC_OUT_MODE_FLASH_TURN;
+    fx.out_cfg.channels[0].indicator = MC_INDICATOR_LEFT; fx.out_cfg.channels[0].hazard_member = true;
+    fx.out_cfg.channels[0].behaviour = MC_OUT_BEHAVIOUR_BLINK;
     fx.out_cfg.turn_flash_period_ms = 200; /* half-period = 100ms */
     mc_output_hal_t ohal = { .set = hal_noop, .ctx = NULL };
     mc_output_init(&fx.output, &fx.out_cfg, ohal);

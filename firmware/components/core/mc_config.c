@@ -1,5 +1,6 @@
 #include "mc_config.h"
 
+#include <stdlib.h>
 #include <string.h>
 
 #include "mc_config_json.h"
@@ -23,21 +24,35 @@ void mc_config_default(mc_config_t *out)
  * still rejected outright (MC_CONFIG_ERR_FUTURE_VERSION, enforced inside
  * mc_config_from_json() itself now, not here). */
 
+/* The MC_CONFIG_JSON_MAX (4KB) staging buffer is heap-allocated, never a
+ * local. On the ESP32-S3 target this runs on the main task during
+ * app_main(), whose stack is CONFIG_ESP_MAIN_TASK_STACK_SIZE — a 4KB local
+ * here overflowed it on every boot and silently corrupted the neighbouring
+ * heap block (the esp_timer task's TCB), which surfaced much later as an
+ * assert/LoadProhibited inside vTaskGenericNotifyGiveFromISR. Keep every
+ * multi-KB config/keystore/lock buffer off the stack. */
 mc_config_result_t mc_config_load(mc_config_store_hal_t hal, mc_config_t *out)
 {
-    uint8_t buf[MC_CONFIG_JSON_MAX];
+    uint8_t *buf = malloc(MC_CONFIG_JSON_MAX);
+    if (buf == NULL) {
+        return MC_CONFIG_ERR_STORE_READ;
+    }
     size_t len = 0;
 
-    mc_config_result_t res = hal.load(buf, sizeof(buf), &len, hal.ctx);
+    mc_config_result_t res = hal.load(buf, MC_CONFIG_JSON_MAX, &len, hal.ctx);
     if (res == MC_CONFIG_ERR_NOT_FOUND) {
+        free(buf);
         mc_config_default(out);
         return MC_CONFIG_OK;
     }
     if (res != MC_CONFIG_OK) {
+        free(buf);
         return res;
     }
 
-    return mc_config_from_json((const char *)buf, len, out);
+    res = mc_config_from_json((const char *)buf, len, out);
+    free(buf);
+    return res;
 }
 
 mc_config_result_t mc_config_save(mc_config_store_hal_t hal, const mc_config_t *cfg)

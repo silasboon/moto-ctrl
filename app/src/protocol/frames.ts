@@ -29,11 +29,22 @@ export function readU16le(b: Uint8Array, off: number): number {
 }
 
 export function readU32le(b: Uint8Array, off: number): number {
-  return (b[off]! | (b[off + 1]! << 8) | (b[off + 2]! << 16) | (b[off + 3]! << 24)) >>> 0;
+  return (
+    (b[off]! |
+      (b[off + 1]! << 8) |
+      (b[off + 2]! << 16) |
+      (b[off + 3]! << 24)) >>>
+    0
+  );
 }
 
 export function u32le(v: number): Uint8Array {
-  return new Uint8Array([v & 0xff, (v >> 8) & 0xff, (v >> 16) & 0xff, (v >>> 24) & 0xff]);
+  return new Uint8Array([
+    v & 0xff,
+    (v >> 8) & 0xff,
+    (v >> 16) & 0xff,
+    (v >>> 24) & 0xff,
+  ]);
 }
 
 export function i16le(v: number): Uint8Array {
@@ -65,7 +76,8 @@ export function readF32le(b: Uint8Array, off: number): number {
   return dv.getFloat32(0, true);
 }
 
-const B64_CHARS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
+const B64_CHARS =
+  'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
 
 export function bytesToBase64(bytes: Uint8Array): string {
   let out = '';
@@ -88,9 +100,15 @@ export function base64ToBytes(b64: string): Uint8Array {
   for (let i = 0; i < clean.length; i += 4) {
     const c0 = B64_CHARS.indexOf(clean[i]!);
     const c1 = B64_CHARS.indexOf(clean[i + 1] ?? 'A');
-    const c2 = clean[i + 2] !== undefined ? B64_CHARS.indexOf(clean[i + 2]!) : -1;
-    const c3 = clean[i + 3] !== undefined ? B64_CHARS.indexOf(clean[i + 3]!) : -1;
-    const triple = ((c0 < 0 ? 0 : c0) << 18) | ((c1 < 0 ? 0 : c1) << 12) | ((c2 < 0 ? 0 : c2) << 6) | (c3 < 0 ? 0 : c3);
+    const c2 =
+      clean[i + 2] !== undefined ? B64_CHARS.indexOf(clean[i + 2]!) : -1;
+    const c3 =
+      clean[i + 3] !== undefined ? B64_CHARS.indexOf(clean[i + 3]!) : -1;
+    const triple =
+      ((c0 < 0 ? 0 : c0) << 18) |
+      ((c1 < 0 ? 0 : c1) << 12) |
+      ((c2 < 0 ? 0 : c2) << 6) |
+      (c3 < 0 ? 0 : c3);
     out.push((triple >> 16) & 0xff);
     if (c2 >= 0) out.push((triple >> 8) & 0xff);
     if (c3 >= 0) out.push(triple & 0xff);
@@ -108,6 +126,6 @@ export function utf8Decode(bytes: Uint8Array): string {
 
 export function bytesToHex(bytes: Uint8Array): string {
   return Array.from(bytes)
-    .map((b) => b.toString(16).padStart(2, '0'))
+    .map(b => b.toString(16).padStart(2, '0'))
     .join('');
 }

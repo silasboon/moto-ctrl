@@ -7,9 +7,21 @@ import nacl from 'tweetnacl';
 
 import { MCOTA_HEADER_BYTES } from '../protocol/constants';
 import { bytesToHex, u32le, utf8Encode } from '../protocol/frames';
-import { downloadFirmwareBundle, fetchUpdateManifest, isNewerVersion, parseMcotaBundle, UpdateCheckError } from '../update/updateCheck';
+import {
+  downloadFirmwareBundle,
+  fetchUpdateManifest,
+  isNewerVersion,
+  parseMcotaBundle,
+  UpdateCheckError,
+} from '../update/updateCheck';
 
-function buildMcota(image: Uint8Array, sha512?: Uint8Array, signature?: Uint8Array, magic = 'MCOT', formatVersion = 1): Uint8Array {
+function buildMcota(
+  image: Uint8Array,
+  sha512?: Uint8Array,
+  signature?: Uint8Array,
+  magic = 'MCOT',
+  formatVersion = 1,
+): Uint8Array {
   const header = new Uint8Array(MCOTA_HEADER_BYTES);
   header.set(utf8Encode(magic).subarray(0, 4), 0);
   header[4] = formatVersion;
@@ -22,8 +34,15 @@ function buildMcota(image: Uint8Array, sha512?: Uint8Array, signature?: Uint8Arr
   return out;
 }
 
-function mockFetchOnce(response: { ok: boolean; status?: number; json?: () => unknown; arrayBuffer?: () => ArrayBuffer }): void {
-  (global as unknown as { fetch: jest.Mock }).fetch = jest.fn().mockResolvedValue(response);
+function mockFetchOnce(response: {
+  ok: boolean;
+  status?: number;
+  json?: () => unknown;
+  arrayBuffer?: () => ArrayBuffer;
+}): void {
+  (global as unknown as { fetch: jest.Mock }).fetch = jest
+    .fn()
+    .mockResolvedValue(response);
 }
 
 describe('parseMcotaBundle', () => {
@@ -40,12 +59,16 @@ describe('parseMcotaBundle', () => {
 
   test('rejects a bad magic', () => {
     const image = new Uint8Array(8);
-    expect(() => parseMcotaBundle(buildMcota(image, undefined, undefined, 'XXXX'))).toThrow(UpdateCheckError);
+    expect(() =>
+      parseMcotaBundle(buildMcota(image, undefined, undefined, 'XXXX')),
+    ).toThrow(UpdateCheckError);
   });
 
   test('rejects an unsupported format version', () => {
     const image = new Uint8Array(8);
-    expect(() => parseMcotaBundle(buildMcota(image, undefined, undefined, 'MCOT', 99))).toThrow(UpdateCheckError);
+    expect(() =>
+      parseMcotaBundle(buildMcota(image, undefined, undefined, 'MCOT', 99)),
+    ).toThrow(UpdateCheckError);
   });
 
   test('rejects a truncated bundle (image shorter than declared image_size)', () => {
@@ -55,7 +78,9 @@ describe('parseMcotaBundle', () => {
   });
 
   test('rejects a buffer too short to hold a header', () => {
-    expect(() => parseMcotaBundle(new Uint8Array(10))).toThrow(UpdateCheckError);
+    expect(() => parseMcotaBundle(new Uint8Array(10))).toThrow(
+      UpdateCheckError,
+    );
   });
 });
 
@@ -88,24 +113,34 @@ describe('fetchUpdateManifest', () => {
         bundle_size: 1000,
       }),
     });
-    const manifest = await fetchUpdateManifest('https://example.com/manifest.json');
+    const manifest = await fetchUpdateManifest(
+      'https://example.com/manifest.json',
+    );
     expect(manifest.version).toBe('1.2.0');
     expect(manifest.bundle_size).toBe(1000);
   });
 
   test('throws UpdateCheckError on a non-OK HTTP response', async () => {
     mockFetchOnce({ ok: false, status: 404 });
-    await expect(fetchUpdateManifest('https://example.com/manifest.json')).rejects.toThrow(UpdateCheckError);
+    await expect(
+      fetchUpdateManifest('https://example.com/manifest.json'),
+    ).rejects.toThrow(UpdateCheckError);
   });
 
   test('throws UpdateCheckError when required fields are missing', async () => {
     mockFetchOnce({ ok: true, json: () => ({ version: '1.2.0' }) });
-    await expect(fetchUpdateManifest('https://example.com/manifest.json')).rejects.toThrow(UpdateCheckError);
+    await expect(
+      fetchUpdateManifest('https://example.com/manifest.json'),
+    ).rejects.toThrow(UpdateCheckError);
   });
 
   test('throws UpdateCheckError when the network call itself rejects', async () => {
-    (global as unknown as { fetch: jest.Mock }).fetch = jest.fn().mockRejectedValue(new Error('offline'));
-    await expect(fetchUpdateManifest('https://example.com/manifest.json')).rejects.toThrow(UpdateCheckError);
+    (global as unknown as { fetch: jest.Mock }).fetch = jest
+      .fn()
+      .mockRejectedValue(new Error('offline'));
+    await expect(
+      fetchUpdateManifest('https://example.com/manifest.json'),
+    ).rejects.toThrow(UpdateCheckError);
   });
 });
 

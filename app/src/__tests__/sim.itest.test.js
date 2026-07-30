@@ -27,17 +27,24 @@ const nacl = require('tweetnacl');
 const { MotoClient } = require('../protocol/MotoClient');
 const { SimTransport } = require('../transport/SimTransport');
 
-const SIM_BIN = process.env.MOTO_SIM_BIN || path.resolve(__dirname, '../../../firmware/sim/build/moto_ctrl_sim');
+const SIM_BIN =
+  process.env.MOTO_SIM_BIN ||
+  path.resolve(__dirname, '../../../firmware/sim/build/moto_ctrl_sim');
 const HAVE_SIM = fs.existsSync(SIM_BIN);
 
 let nextPort = 8300 + Math.floor(Math.random() * 500);
 
 function startSim() {
   const port = nextPort++;
-  const sim = spawn(SIM_BIN, [String(port)], { stdio: ['ignore', 'pipe', 'inherit'] });
+  const sim = spawn(SIM_BIN, [String(port)], {
+    stdio: ['ignore', 'pipe', 'inherit'],
+  });
   const ready = new Promise((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error('sim did not start listening in time')), 5000);
-    sim.stdout.on('data', (chunk) => {
+    const timer = setTimeout(
+      () => reject(new Error('sim did not start listening in time')),
+      5000,
+    );
+    sim.stdout.on('data', chunk => {
       if (chunk.toString().includes('listening')) {
         clearTimeout(timer);
         resolve();
@@ -52,7 +59,10 @@ async function enrollAndAuth(client) {
   const kp = nacl.sign.keyPair();
   const enroll = await client.enroll(kp.publicKey, 'Test Phone');
   expect(enroll.ok).toBe(true);
-  const auth = await client.authenticate({ publicKey: kp.publicKey, secretKey: kp.secretKey });
+  const auth = await client.authenticate({
+    publicKey: kp.publicKey,
+    secretKey: kp.secretKey,
+  });
   expect(auth.ok).toBe(true);
   return kp;
 }
@@ -60,7 +70,9 @@ async function enrollAndAuth(client) {
 const d = HAVE_SIM ? describe : describe.skip;
 if (!HAVE_SIM) {
   // eslint-disable-next-line no-console
-  console.warn(`Skipping live sim tests: ${SIM_BIN} not found. Build firmware/sim first (see docs/TESTING.md).`);
+  console.warn(
+    `Skipping live sim tests: ${SIM_BIN} not found. Build firmware/sim first (see docs/TESTING.md).`,
+  );
 }
 
 d('MotoClient against a real firmware/sim instance', () => {
@@ -99,7 +111,7 @@ d('MotoClient against a real firmware/sim instance', () => {
     await enrollAndAuth(client);
 
     const config = await client.configRead();
-    config.outputs.channels[0].function = 'starter';
+    config.outputs.channels[0].is_starter = true;
     const write = await client.configWrite(config);
     expect(write.ok).toBe(true);
 
@@ -107,18 +119,22 @@ d('MotoClient against a real firmware/sim instance', () => {
     expect(result.ok).toBe(false);
   });
 
-  test('config write/read round-trips a channel function and name', async () => {
+  test('config write/read round-trips a channel name, behaviour and roles', async () => {
     await enrollAndAuth(client);
 
     const config = await client.configRead();
     config.outputs.channels[3].name = 'Low Beam';
-    config.outputs.channels[3].function = 'headlight_lo';
+    config.outputs.channels[3].behaviour = 'toggle';
+    // schema_version 6: "never shed this under low voltage" is an explicit
+    // flag rather than something inferred from a headlight tag.
+    config.outputs.channels[3].essential = true;
     const write = await client.configWrite(config);
     expect(write.ok).toBe(true);
 
     const reread = await client.configRead();
     expect(reread.outputs.channels[3].name).toBe('Low Beam');
-    expect(reread.outputs.channels[3].function).toBe('headlight_lo');
+    expect(reread.outputs.channels[3].behaviour).toBe('toggle');
+    expect(reread.outputs.channels[3].essential).toBe(true);
   });
 
   test('two phones can be enrolled and authenticate independently; revoking one blocks it', async () => {
@@ -127,23 +143,32 @@ d('MotoClient against a real firmware/sim instance', () => {
     const enrollB = await client.enroll(kpB.publicKey, 'Phone B');
     expect(enrollB.ok).toBe(true);
 
-    const authB = await client.authenticate({ publicKey: kpB.publicKey, secretKey: kpB.secretKey });
+    const authB = await client.authenticate({
+      publicKey: kpB.publicKey,
+      secretKey: kpB.secretKey,
+    });
     expect(authB.ok).toBe(true);
 
     const revoke = await client.keyRevoke(authB.slot);
     expect(revoke.ok).toBe(true);
 
-    const authBAgain = await client.authenticate({ publicKey: kpB.publicKey, secretKey: kpB.secretKey });
+    const authBAgain = await client.authenticate({
+      publicKey: kpB.publicKey,
+      secretKey: kpB.secretKey,
+    });
     expect(authBAgain.ok).toBe(false);
 
-    const authAAgain = await client.authenticate({ publicKey: kpA.publicKey, secretKey: kpA.secretKey });
+    const authAAgain = await client.authenticate({
+      publicKey: kpA.publicKey,
+      secretKey: kpA.secretKey,
+    });
     expect(authAAgain.ok).toBe(true);
   });
 
   describe('Lock / immobilizer', () => {
     async function configureIgnitionChannel() {
       const config = await client.configRead();
-      config.outputs.channels[5].function = 'ignition';
+      config.outputs.channels[5].is_ignition = true;
       const write = await client.configWrite(config);
       expect(write.ok).toBe(true);
     }
@@ -270,7 +295,10 @@ d('MotoClient against a real firmware/sim instance', () => {
       expect(after.immobilizerEnabled).toBe(false);
       expect(after.cheatcodeSet).toBe(false);
 
-      const authAgain = await client.authenticate({ publicKey: kp.publicKey, secretKey: kp.secretKey });
+      const authAgain = await client.authenticate({
+        publicKey: kp.publicKey,
+        secretKey: kp.secretKey,
+      });
       expect(authAgain.ok).toBe(false); // key was wiped
     });
   });
@@ -285,7 +313,7 @@ d('MotoClient against a real firmware/sim instance', () => {
       // mc_diag populates battery_mv from its first tick (~10ms after boot,
       // same as a real ADC not yet having been read once) -- give it a
       // moment so this doesn't race the connection handshake.
-      await new Promise((r) => setTimeout(r, 100));
+      await new Promise(r => setTimeout(r, 100));
       const status = await client.getStatus();
       expect(status.batteryMv).toBe(13200);
       expect(status.lvCutoffActive).toBe(false);
@@ -310,7 +338,10 @@ d('MotoClient against a real firmware/sim instance', () => {
       expect(setResult.ok).toBe(true);
 
       const reread = await client.diagGetConfig();
-      expect(reread.channels[2]).toEqual({ openLoadMa: 200, overcurrentMa: 4000 });
+      expect(reread.channels[2]).toEqual({
+        openLoadMa: 200,
+        overcurrentMa: 4000,
+      });
       expect(reread.lvCutoffMv).toBe(12000);
 
       reread.channels[2] = { openLoadMa: 9000, overcurrentMa: 100 }; // inverted
@@ -321,12 +352,11 @@ d('MotoClient against a real firmware/sim instance', () => {
     test('an energized channel with no real current reads a real open-load fault', async () => {
       await enrollAndAuth(client);
       const config = await client.configRead();
-      config.outputs.channels[4].function = 'aux';
       await client.configWrite(config);
       await client.setOutput(4, true);
 
       // The sim's real mc_diag round-robin needs a moment to sample it.
-      await new Promise((r) => setTimeout(r, 100));
+      await new Promise(r => setTimeout(r, 100));
 
       const diag = await client.getDiagnostics();
       expect(diag.channels[4].currentMa).toBe(0); // nothing injects current in this environment
@@ -340,14 +370,13 @@ d('MotoClient against a real firmware/sim instance', () => {
     test('diagLearn requires the channel to be energized', async () => {
       await enrollAndAuth(client);
       const config = await client.configRead();
-      config.outputs.channels[6].function = 'aux';
       await client.configWrite(config);
 
       const rejectedOff = await client.diagLearn(6);
       expect(rejectedOff.ok).toBe(false);
 
       await client.setOutput(6, true);
-      await new Promise((r) => setTimeout(r, 100));
+      await new Promise(r => setTimeout(r, 100));
       const learned = await client.diagLearn(6);
       expect(learned.ok).toBe(true);
 
@@ -372,8 +401,10 @@ d('MotoClient against a real firmware/sim instance', () => {
     test('turn signals: setOutput applies mutual exclusion device-side', async () => {
       await enrollAndAuth(client);
       const config = await client.configRead();
-      config.outputs.channels[0].function = 'turn_l';
-      config.outputs.channels[1].function = 'turn_r';
+      config.outputs.channels[0].indicator = 'left';
+      config.outputs.channels[0].hazard_member = true;
+      config.outputs.channels[1].indicator = 'right';
+      config.outputs.channels[1].hazard_member = true;
       await client.configWrite(config);
 
       await client.setOutput(0, true);
@@ -392,7 +423,8 @@ d('MotoClient against a real firmware/sim instance', () => {
     test('turn signals: auto-cancel timer clears the signal with no client action', async () => {
       await enrollAndAuth(client);
       const config = await client.configRead();
-      config.outputs.channels[0].function = 'turn_l';
+      config.outputs.channels[0].indicator = 'left';
+      config.outputs.channels[0].hazard_member = true;
       config.outputs.turn_auto_cancel_ms = 300; // short, for a fast test
       await client.configWrite(config);
 
@@ -401,7 +433,7 @@ d('MotoClient against a real firmware/sim instance', () => {
       // eslint-disable-next-line no-bitwise
       expect(status.outputStateMask & (1 << 0)).not.toBe(0);
 
-      await new Promise((r) => setTimeout(r, 600));
+      await new Promise(r => setTimeout(r, 600));
       status = await client.getStatus();
       // eslint-disable-next-line no-bitwise
       expect(status.outputStateMask & (1 << 0)).toBe(0);
@@ -413,8 +445,10 @@ d('MotoClient against a real firmware/sim instance', () => {
       expect(rejected.ok).toBe(false);
 
       const config = await client.configRead();
-      config.outputs.channels[0].function = 'turn_l';
-      config.outputs.channels[1].function = 'turn_r';
+      config.outputs.channels[0].indicator = 'left';
+      config.outputs.channels[0].hazard_member = true;
+      config.outputs.channels[1].indicator = 'right';
+      config.outputs.channels[1].hazard_member = true;
       await client.configWrite(config);
 
       const on = await client.hazardPress();
@@ -437,15 +471,13 @@ d('MotoClient against a real firmware/sim instance', () => {
     test('mode, pwm duty, and flasher timing round-trip through the real config JSON', async () => {
       await enrollAndAuth(client);
       const config = await client.configRead();
-      config.outputs.channels[2].function = 'aux';
-      config.outputs.channels[2].mode = 'pwm';
       config.outputs.channels[2].pwm_duty_pct = 42;
       config.outputs.brake_switch_input = 5;
       config.outputs.brake_flash_pulse_count = 5;
       await client.configWrite(config);
 
       const reread = await client.configRead();
-      expect(reread.outputs.channels[2].mode).toBe('pwm');
+      expect(reread.outputs.channels[2].behaviour).toBe('toggle');
       expect(reread.outputs.channels[2].pwm_duty_pct).toBe(42);
       expect(reread.outputs.brake_switch_input).toBe(5);
       expect(reread.outputs.brake_flash_pulse_count).toBe(5);

@@ -30,46 +30,103 @@ export function isOutputOn(status: Status, channel: number): boolean {
   return (status.outputStateMask & (1 << channel)) !== 0;
 }
 
-export const OUTPUT_FUNCTIONS = [
-  'none',
-  'headlight_hi',
-  'headlight_lo',
-  'brake',
-  'turn_l',
-  'turn_r',
-  'horn',
-  'ignition',
-  'starter',
-  'aux',
+/** What a channel does when its trigger fires (mc_output_behaviour_t).
+ * schema_version 6 replaced the old function/mode pair with this plus the
+ * explicit role flags below — a rider names a channel whatever they like, and
+ * firmware only needs to know the roles that carry real safety logic. */
+export const OUTPUT_BEHAVIOURS = [
+  'toggle',
+  'momentary',
+  'blink',
+  'flasher',
 ] as const;
-export type OutputFunction = (typeof OUTPUT_FUNCTIONS)[number];
+export type OutputBehaviour = (typeof OUTPUT_BEHAVIOURS)[number];
 
-/** mc_output_mode_t: 'off'/'on'/'pwm'/'flash_turn'/'flash_brake'. 'off'/'on'
- * are plain digital; 'pwm' is a steady dimmed brightness at pwmDutyPct
- * while commanded on (opt-in, off by default per AGENTS.md's PWM/flasher
- * rule); 'flash_turn' blinks at outputs.turn_flash_period_ms; 'flash_brake'
- * plays an attention-pulse burst (outputs.brake_flash_pulse_*) on the
- * off->on transition, then solid — also opt-in/off-by-default (AGENTS.md
- * #5: flash patterns aren't legal everywhere), so a BRAKE-function channel
- * defaults to plain 'on', not 'flash_brake'. */
-export type OutputMode = 'off' | 'on' | 'pwm' | 'flash_turn' | 'flash_brake';
+export const BEHAVIOUR_LABELS: Record<OutputBehaviour, string> = {
+  toggle: 'On / off toggle',
+  momentary: 'Momentary (while held)',
+  blink: 'Blink (indicator / hazard)',
+  flasher: 'Flasher (brake light)',
+};
+
+export const BEHAVIOUR_HINTS: Record<OutputBehaviour, string> = {
+  toggle: 'Latches on, latches off.',
+  momentary:
+    'On only while its button is held. Bind it to a hold or a held chord.',
+  blink: 'Flashes while on, at the turn-signal rate.',
+  flasher: 'A short attention burst on switch-on, then solid.',
+};
+
+export const INDICATOR_SIDES = ['none', 'left', 'right'] as const;
+export type IndicatorSide = (typeof INDICATOR_SIDES)[number];
+
+export const INDICATOR_LABELS: Record<IndicatorSide, string> = {
+  none: 'Not an indicator',
+  left: 'Left indicator',
+  right: 'Right indicator',
+};
 
 export interface OutputChannelConfig {
-  function: OutputFunction;
+  /** Free text. Nothing in the firmware keys off a name. */
   name: string;
-  mode: OutputMode;
+  behaviour: OutputBehaviour;
   commanded_on: boolean;
-  /** 1-100, meaningful only when mode === 'pwm'. */
+  /** 1-100. Below 100 dims the channel whenever it is driven on; composes
+   * with toggle and momentary, never applied to blink/flasher patterns. */
   pwm_duty_pct: number;
+
+  /* Role flags — the only channel properties that carry safety logic. */
+
+  /** Never switched off by the low-voltage cutoff. Set on anything that must
+   * not go dark mid-ride. Ignition and brake are treated as essential even
+   * without this, so a config mistake can't shed them. */
+  essential: boolean;
+  /** The immobilizer's target, and how the lock knows the bike is running. */
+  is_ignition: boolean;
+  /** Never commandable from the app; inhibited while the engine runs and
+   * gated behind the neutral/clutch interlock. */
+  is_starter: boolean;
+  /** The brake light: target of the brake-switch pass-through. */
+  is_brake: boolean;
+  /** Turn mutual exclusion and auto-cancel apply only to indicators. */
+  indicator: IndicatorSide;
+  /** Blinks together with the hazards. Anything can join — a DRL, an aux
+   * light — without becoming an indicator. */
+  hazard_member: boolean;
 }
 
 export type ComboType = 'chord' | 'sequence';
 
+/* Action ids — see docs/PROTOCOL.md §9. Ids 1-3 resolve via a channel's
+ * assigned `function`; OUTPUT_TOGGLE_BASE + N addresses output channel N
+ * directly and is what a "bind this button to that output" UI should emit,
+ * since all 12 outputs are electrically identical. */
+export const ACTION_NONE = 0;
+export const ACTION_TURN_L_TOGGLE = 1;
+export const ACTION_TURN_R_TOGGLE = 2;
+export const ACTION_HAZARD_TOGGLE = 3;
+export const ACTION_OUTPUT_TOGGLE_BASE = 256;
+
+/** Action id that toggles output channel `ch` (0-11) directly. */
+export function actionToggleOutput(ch: number): number {
+  return ACTION_OUTPUT_TOGGLE_BASE + ch;
+}
+
+/** Inverse of actionToggleOutput, or null if `id` isn't a direct binding. */
+export function outputChannelForAction(id: number): number | null {
+  const ch = id - ACTION_OUTPUT_TOGGLE_BASE;
+  return ch >= 0 && ch < 12 ? ch : null;
+}
+
+/** Max actions one trigger may fire (MC_ACTION_LIST_MAX). */
+export const ACTION_LIST_MAX = 4;
+
 export interface ComboDef {
   type: ComboType;
   buttons: number[];
+  /** Up to ACTION_LIST_MAX ids, applied in order. Empty means unbound. */
+  actions: number[];
   window_ms: number;
-  action_id: number;
 }
 
 export interface InputTimingConfig {
@@ -81,9 +138,15 @@ export interface InputTimingConfig {
 export interface InputsConfig {
   timing: InputTimingConfig;
   combos: ComboDef[];
-  short_press_action: number[];
-  long_press_action: number[];
-  double_press_action: number[];
+  /* One action LIST per button (8 entries, indexed by input), not one id —
+   * a single press may switch several outputs. Empty array = unbound.
+   * schema_version 4; the firmware still parses the v3 bare-number form,
+   * but the app always writes the array form. */
+  short_press_action: number[][];
+  long_press_action: number[][];
+  double_press_action: number[][];
+  /** Rider-assigned button labels, 8 entries. Empty = unnamed. */
+  names: string[];
 }
 
 export interface OutputsConfig {
@@ -97,7 +160,7 @@ export interface OutputsConfig {
   turn_auto_cancel_ms: number;
   /** Full on+off blink cycle for a 'flash_turn'-mode channel, ms. */
   turn_flash_period_ms: number;
-  /** Brake-flasher attention-pulse burst (see OutputMode's doc comment). */
+  /** Brake-flasher attention-pulse burst (see the 'flasher' behaviour). */
   brake_flash_pulse_count: number;
   brake_flash_pulse_on_ms: number;
   brake_flash_pulse_off_ms: number;
@@ -137,12 +200,45 @@ export function defaultOutputChannel(): OutputChannelConfig {
   // comment (firmware/components/core/mc_output.c). 'on' is the right
   // default for a freshly-assigned channel: ordinary digital on/off until
   // explicitly opted into something else.
-  return { function: 'none', name: '', mode: 'on', commanded_on: false, pwm_duty_pct: 100 };
+  return {
+    name: '',
+    behaviour: 'toggle',
+    commanded_on: false,
+    pwm_duty_pct: 100,
+    essential: false,
+    is_ignition: false,
+    is_starter: false,
+    is_brake: false,
+    indicator: 'none',
+    hazard_member: false,
+  };
+}
+
+/** Which behaviours make sense for a given trigger. Encodes the product
+ * matrix so the binding UI can't offer a combination the firmware won't
+ * honour — e.g. a momentary output bound to a single tap would never fire,
+ * because momentary follows a HOLD. */
+export function behavioursForTrigger(
+  trigger: 'tap' | 'double' | 'hold' | 'chord' | 'switch',
+): readonly OutputBehaviour[] {
+  switch (trigger) {
+    case 'tap':
+    case 'double':
+    case 'chord':
+      return ['toggle', 'blink'];
+    case 'hold':
+      return ['momentary', 'toggle'];
+    case 'switch':
+      return ['momentary', 'toggle', 'blink'];
+  }
 }
 
 export function defaultDiagnosticsJsonConfig(): DiagnosticsJsonConfig {
   return {
-    channels: Array.from({ length: OUTPUT_COUNT }, () => ({ open_load_ma: 50, overcurrent_ma: 15000 })),
+    channels: Array.from({ length: OUTPUT_COUNT }, () => ({
+      open_load_ma: 50,
+      overcurrent_ma: 15000,
+    })),
     lv_cutoff_mv: 11800,
     lv_cutoff_hysteresis_mv: 300,
     engine_run_mv: 13800,
@@ -152,7 +248,7 @@ export function defaultDiagnosticsJsonConfig(): DiagnosticsJsonConfig {
 
 export function defaultConfig(): DeviceConfig {
   return {
-    schema_version: 3,
+    schema_version: 6,
     outputs: {
       channels: Array.from({ length: OUTPUT_COUNT }, defaultOutputChannel),
       starter_interlock_input: -1,
@@ -166,9 +262,10 @@ export function defaultConfig(): DeviceConfig {
     inputs: {
       timing: { debounce_ms: 20, long_press_ms: 600, double_press_gap_ms: 350 },
       combos: [],
-      short_press_action: new Array(8).fill(0),
-      long_press_action: new Array(8).fill(0),
-      double_press_action: new Array(8).fill(0),
+      short_press_action: Array.from({ length: 8 }, () => []),
+      long_press_action: Array.from({ length: 8 }, () => []),
+      double_press_action: Array.from({ length: 8 }, () => []),
+      names: new Array(8).fill(''),
     },
     diagnostics: defaultDiagnosticsJsonConfig(),
   };
@@ -236,7 +333,10 @@ export interface DiagConfig {
 
 export function defaultDiagConfig(): DiagConfig {
   return {
-    channels: Array.from({ length: OUTPUT_COUNT }, () => ({ openLoadMa: 50, overcurrentMa: 15000 })),
+    channels: Array.from({ length: OUTPUT_COUNT }, () => ({
+      openLoadMa: 50,
+      overcurrentMa: 15000,
+    })),
     lvCutoffMv: 11800,
     lvCutoffHysteresisMv: 300,
     engineRunMv: 13800,
@@ -255,7 +355,13 @@ export interface DiagCalib {
 }
 
 export function defaultDiagCalib(): DiagCalib {
-  return { isGain: 1, isOffsetMv: 0, kilis: 1, vbatGain: 11.0011, vbatOffsetMv: 0 };
+  return {
+    isGain: 1,
+    isOffsetMv: 0,
+    kilis: 1,
+    vbatGain: 11.0011,
+    vbatOffsetMv: 0,
+  };
 }
 
 export interface DiagChannelReading {

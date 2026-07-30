@@ -20,10 +20,22 @@
  * DashboardScreen/LockScreen/PinMapperScreen already each follow.
  */
 import React, { useEffect, useState } from 'react';
-import { ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import {
+  ScrollView,
+  StyleSheet,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  View,
+} from 'react-native';
 
-import { DIAG_FAULT, DIAG_LEARN_ALL, OUTPUT_COUNT } from '../protocol/constants';
+import {
+  DIAG_FAULT,
+  DIAG_LEARN_ALL,
+  OUTPUT_COUNT,
+} from '../protocol/constants';
 import type { MotoClient } from '../protocol/MotoClient';
+import { colors } from '../ui/theme';
 import {
   defaultDiagCalib,
   defaultDiagConfig,
@@ -46,7 +58,10 @@ const FAULT_LABEL: Record<number, string> = {
   [DIAG_FAULT.OVERCURRENT]: 'OVERCURRENT',
 };
 
-export function DiagnosticsScreen({ client, onDone }: Props): React.JSX.Element {
+export function DiagnosticsScreen({
+  client,
+  onDone,
+}: Props): React.JSX.Element {
   const [diagConfig, setDiagConfig] = useState<DiagConfig>(defaultDiagConfig());
   const [live, setLive] = useState<Diagnostics | null>(null);
   const [calib, setCalib] = useState<DiagCalib>(defaultDiagCalib());
@@ -61,13 +76,19 @@ export function DiagnosticsScreen({ client, onDone }: Props): React.JSX.Element 
   const [learnResult, setLearnResult] = useState<string | null>(null);
 
   useEffect(() => {
-    Promise.all([client.diagGetConfig(), client.diagGetCalib(), client.configRead()])
+    Promise.all([
+      client.diagGetConfig(),
+      client.diagGetCalib(),
+      client.configRead(),
+    ])
       .then(([cfg, cal, deviceCfg]) => {
         setDiagConfig(cfg);
         setCalib(cal);
         setConfig(deviceCfg);
       })
-      .catch((err: unknown) => setError(err instanceof Error ? err.message : String(err)))
+      .catch((err: unknown) =>
+        setError(err instanceof Error ? err.message : String(err)),
+      )
       .finally(() => setLoading(false));
   }, [client]);
 
@@ -76,7 +97,7 @@ export function DiagnosticsScreen({ client, onDone }: Props): React.JSX.Element 
     const poll = () => {
       client
         .getDiagnostics()
-        .then((d) => {
+        .then(d => {
           if (!cancelled) setLive(d);
         })
         .catch(() => {
@@ -106,7 +127,9 @@ export function DiagnosticsScreen({ client, onDone }: Props): React.JSX.Element 
     setSaveResult(null);
     try {
       const result = await client.diagSetConfig(diagConfig);
-      setSaveResult(result.ok ? 'Saved.' : `Rejected by device: ${result.resultName}`);
+      setSaveResult(
+        result.ok ? 'Saved.' : `Rejected by device: ${result.resultName}`,
+      );
       await refreshConfig();
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -120,7 +143,9 @@ export function DiagnosticsScreen({ client, onDone }: Props): React.JSX.Element 
     setCalibResult(null);
     try {
       const result = await client.diagSetCalib(calib);
-      setCalibResult(result.ok ? 'Saved.' : `Rejected by device: ${result.resultName}`);
+      setCalibResult(
+        result.ok ? 'Saved.' : `Rejected by device: ${result.resultName}`,
+      );
       if (result.ok) setCalib(await client.diagGetCalib());
     } catch (err) {
       setCalibResult(err instanceof Error ? err.message : String(err));
@@ -149,8 +174,12 @@ export function DiagnosticsScreen({ client, onDone }: Props): React.JSX.Element 
     }
   }
 
-  function setChannelField(ch: number, field: 'openLoadMa' | 'overcurrentMa', value: number): void {
-    setDiagConfig((prev) => {
+  function setChannelField(
+    ch: number,
+    field: 'openLoadMa' | 'overcurrentMa',
+    value: number,
+  ): void {
+    setDiagConfig(prev => {
       const channels = prev.channels.slice();
       channels[ch] = { ...channels[ch]!, [field]: value };
       return { ...prev, channels };
@@ -178,47 +207,76 @@ export function DiagnosticsScreen({ client, onDone }: Props): React.JSX.Element 
       <View style={styles.row}>
         <Text style={styles.rowLabel}>Low-voltage cutoff (mV)</Text>
         <TextInput
+          placeholderTextColor={colors.textFaint}
           style={styles.numInput}
           keyboardType="number-pad"
           value={String(diagConfig.lvCutoffMv)}
-          onChangeText={(v) => setDiagConfig((prev) => ({ ...prev, lvCutoffMv: parseInt(v, 10) || 0 }))}
+          onChangeText={v =>
+            setDiagConfig(prev => ({
+              ...prev,
+              lvCutoffMv: parseInt(v, 10) || 0,
+            }))
+          }
         />
       </View>
       <View style={styles.row}>
         <Text style={styles.rowLabel}>Cutoff hysteresis (mV)</Text>
         <TextInput
+          placeholderTextColor={colors.textFaint}
           style={styles.numInput}
           keyboardType="number-pad"
           value={String(diagConfig.lvCutoffHysteresisMv)}
-          onChangeText={(v) => setDiagConfig((prev) => ({ ...prev, lvCutoffHysteresisMv: parseInt(v, 10) || 0 }))}
+          onChangeText={v =>
+            setDiagConfig(prev => ({
+              ...prev,
+              lvCutoffHysteresisMv: parseInt(v, 10) || 0,
+            }))
+          }
         />
       </View>
       <View style={styles.row}>
         <Text style={styles.rowLabel}>Engine-running threshold (mV)</Text>
         <TextInput
+          placeholderTextColor={colors.textFaint}
           style={styles.numInput}
           keyboardType="number-pad"
           value={String(diagConfig.engineRunMv)}
-          onChangeText={(v) => setDiagConfig((prev) => ({ ...prev, engineRunMv: parseInt(v, 10) || 0 }))}
+          onChangeText={v =>
+            setDiagConfig(prev => ({
+              ...prev,
+              engineRunMv: parseInt(v, 10) || 0,
+            }))
+          }
         />
       </View>
       <View style={styles.row}>
         <Text style={styles.rowLabel}>Engine-run hysteresis (mV)</Text>
         <TextInput
+          placeholderTextColor={colors.textFaint}
           style={styles.numInput}
           keyboardType="number-pad"
           value={String(diagConfig.engineRunHysteresisMv)}
-          onChangeText={(v) => setDiagConfig((prev) => ({ ...prev, engineRunHysteresisMv: parseInt(v, 10) || 0 }))}
+          onChangeText={v =>
+            setDiagConfig(prev => ({
+              ...prev,
+              engineRunHysteresisMv: parseInt(v, 10) || 0,
+            }))
+          }
         />
       </View>
       <Text style={styles.hint}>
-        Below the cutoff (and only while the engine isn&apos;t detected running), non-essential outputs are
-        suppressed automatically — ignition, brake, and both headlight channels are never affected.
+        Below the cutoff (and only while the engine isn&apos;t detected
+        running), non-essential outputs are suppressed automatically — ignition,
+        brake, and both headlight channels are never affected.
       </Text>
 
       {error && <Text style={styles.error}>{error}</Text>}
       {saveResult && <Text style={styles.success}>{saveResult}</Text>}
-      <TouchableOpacity style={[styles.saveButton, saving && styles.disabled]} onPress={saveConfig} disabled={saving}>
+      <TouchableOpacity
+        style={[styles.saveButton, saving && styles.disabled]}
+        onPress={saveConfig}
+        disabled={saving}
+      >
         <Text style={styles.saveButtonText}>{saving ? 'Saving…' : 'Save'}</Text>
       </TouchableOpacity>
 
@@ -229,7 +287,9 @@ export function DiagnosticsScreen({ client, onDone }: Props): React.JSX.Element 
           onPress={() => learn(DIAG_LEARN_ALL)}
           disabled={learnBusy !== null}
         >
-          <Text style={styles.smallButtonText}>{learnBusy === -1 ? 'Learning…' : 'Learn all energized'}</Text>
+          <Text style={styles.smallButtonText}>
+            {learnBusy === -1 ? 'Learning…' : 'Learn all energized'}
+          </Text>
         </TouchableOpacity>
       </View>
       {learnResult && <Text style={styles.hint}>{learnResult}</Text>}
@@ -241,33 +301,48 @@ export function DiagnosticsScreen({ client, onDone }: Props): React.JSX.Element 
         return (
           <View key={ch} style={styles.channelCard}>
             <View style={styles.channelHeaderRow}>
-              <Text style={styles.channelName}>{chCfg?.name || `Channel ${ch}`}</Text>
+              <Text style={styles.channelName}>
+                {chCfg?.name || `Channel ${ch}`}
+              </Text>
               <Text style={[styles.readingText, hasFault && styles.error]}>
                 {reading ? `${reading.currentMa} mA` : '– mA'}
-                {reading && hasFault ? ` · ${FAULT_LABEL[reading.fault] ?? reading.fault}` : ''}
+                {reading && hasFault
+                  ? ` · ${FAULT_LABEL[reading.fault] ?? reading.fault}`
+                  : ''}
               </Text>
             </View>
             <View style={styles.row}>
               <Text style={styles.rowLabelSmall}>Open-load (mA)</Text>
               <TextInput
+                placeholderTextColor={colors.textFaint}
                 style={styles.numInputSmall}
                 keyboardType="number-pad"
                 value={String(diagConfig.channels[ch]?.openLoadMa ?? 0)}
-                onChangeText={(v) => setChannelField(ch, 'openLoadMa', parseInt(v, 10) || 0)}
+                onChangeText={v =>
+                  setChannelField(ch, 'openLoadMa', parseInt(v, 10) || 0)
+                }
               />
               <Text style={styles.rowLabelSmall}>Overcurrent (mA)</Text>
               <TextInput
+                placeholderTextColor={colors.textFaint}
                 style={styles.numInputSmall}
                 keyboardType="number-pad"
                 value={String(diagConfig.channels[ch]?.overcurrentMa ?? 0)}
-                onChangeText={(v) => setChannelField(ch, 'overcurrentMa', parseInt(v, 10) || 0)}
+                onChangeText={v =>
+                  setChannelField(ch, 'overcurrentMa', parseInt(v, 10) || 0)
+                }
               />
               <TouchableOpacity
-                style={[styles.smallButton, learnBusy === ch && styles.disabled]}
+                style={[
+                  styles.smallButton,
+                  learnBusy === ch && styles.disabled,
+                ]}
                 onPress={() => learn(ch)}
                 disabled={learnBusy !== null}
               >
-                <Text style={styles.smallButtonText}>{learnBusy === ch ? '…' : 'Learn'}</Text>
+                <Text style={styles.smallButtonText}>
+                  {learnBusy === ch ? '…' : 'Learn'}
+                </Text>
               </TouchableOpacity>
             </View>
           </View>
@@ -276,52 +351,68 @@ export function DiagnosticsScreen({ client, onDone }: Props): React.JSX.Element 
 
       <Text style={styles.sectionTitle}>Board calibration</Text>
       <Text style={styles.hint}>
-        Bench/installer values for this specific board&apos;s sense lines — never included in a config
-        export/import, and not wiped by ownership transfer (it describes the board, not the owner).
+        Bench/installer values for this specific board&apos;s sense lines —
+        never included in a config export/import, and not wiped by ownership
+        transfer (it describes the board, not the owner).
       </Text>
       <View style={styles.row}>
         <Text style={styles.rowLabel}>IS gain</Text>
         <TextInput
+          placeholderTextColor={colors.textFaint}
           style={styles.numInput}
           keyboardType="numeric"
           value={String(calib.isGain)}
-          onChangeText={(v) => setCalib((prev) => ({ ...prev, isGain: parseFloat(v) || 0 }))}
+          onChangeText={v =>
+            setCalib(prev => ({ ...prev, isGain: parseFloat(v) || 0 }))
+          }
         />
       </View>
       <View style={styles.row}>
         <Text style={styles.rowLabel}>IS offset (mV)</Text>
         <TextInput
+          placeholderTextColor={colors.textFaint}
           style={styles.numInput}
           keyboardType="number-pad"
           value={String(calib.isOffsetMv)}
-          onChangeText={(v) => setCalib((prev) => ({ ...prev, isOffsetMv: parseInt(v, 10) || 0 }))}
+          onChangeText={v =>
+            setCalib(prev => ({ ...prev, isOffsetMv: parseInt(v, 10) || 0 }))
+          }
         />
       </View>
       <View style={styles.row}>
         <Text style={styles.rowLabel}>kILIS</Text>
         <TextInput
+          placeholderTextColor={colors.textFaint}
           style={styles.numInput}
           keyboardType="numeric"
           value={String(calib.kilis)}
-          onChangeText={(v) => setCalib((prev) => ({ ...prev, kilis: parseFloat(v) || 0 }))}
+          onChangeText={v =>
+            setCalib(prev => ({ ...prev, kilis: parseFloat(v) || 0 }))
+          }
         />
       </View>
       <View style={styles.row}>
         <Text style={styles.rowLabel}>Vbat gain</Text>
         <TextInput
+          placeholderTextColor={colors.textFaint}
           style={styles.numInput}
           keyboardType="numeric"
           value={String(calib.vbatGain)}
-          onChangeText={(v) => setCalib((prev) => ({ ...prev, vbatGain: parseFloat(v) || 0 }))}
+          onChangeText={v =>
+            setCalib(prev => ({ ...prev, vbatGain: parseFloat(v) || 0 }))
+          }
         />
       </View>
       <View style={styles.row}>
         <Text style={styles.rowLabel}>Vbat offset (mV)</Text>
         <TextInput
+          placeholderTextColor={colors.textFaint}
           style={styles.numInput}
           keyboardType="number-pad"
           value={String(calib.vbatOffsetMv)}
-          onChangeText={(v) => setCalib((prev) => ({ ...prev, vbatOffsetMv: parseInt(v, 10) || 0 }))}
+          onChangeText={v =>
+            setCalib(prev => ({ ...prev, vbatOffsetMv: parseInt(v, 10) || 0 }))
+          }
         />
       </View>
       {calibResult && <Text style={styles.hint}>{calibResult}</Text>}
@@ -330,43 +421,97 @@ export function DiagnosticsScreen({ client, onDone }: Props): React.JSX.Element 
         onPress={saveCalib}
         disabled={calibSaving}
       >
-        <Text style={styles.saveButtonText}>{calibSaving ? 'Saving…' : 'Save calibration'}</Text>
+        <Text style={styles.saveButtonText}>
+          {calibSaving ? 'Saving…' : 'Save calibration'}
+        </Text>
       </TouchableOpacity>
     </ScrollView>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1 },
+  container: { flex: 1, backgroundColor: colors.bg },
   content: { padding: 16, gap: 10 },
   center: { flex: 1, alignItems: 'center', justifyContent: 'center' },
-  header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-  title: { fontSize: 20, fontWeight: '700' },
-  link: { color: '#2563eb' },
-  row: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 4, gap: 6 },
-  rowLabel: { fontSize: 14 },
-  rowLabelSmall: { fontSize: 11, color: '#666' },
-  sectionTitle: { fontSize: 13, color: '#666', textTransform: 'uppercase', marginTop: 10 },
-  hint: { fontSize: 12, color: '#888' },
-  numInput: { borderWidth: 1, borderColor: '#ccc', borderRadius: 6, padding: 8, width: 90, textAlign: 'right' },
-  numInputSmall: { borderWidth: 1, borderColor: '#ccc', borderRadius: 6, padding: 6, width: 64, textAlign: 'right' },
-  error: { color: '#b91c1c' },
-  success: { color: '#15803d' },
-  saveButton: { backgroundColor: '#2563eb', padding: 12, borderRadius: 8, alignItems: 'center', marginTop: 4 },
+  header: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  title: { color: colors.text, fontSize: 20, fontWeight: '700' },
+  link: { color: colors.accent },
+  row: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingVertical: 4,
+    gap: 6,
+  },
+  rowLabel: { color: colors.text, fontSize: 14 },
+  rowLabelSmall: { fontSize: 11, color: colors.textMuted },
+  sectionTitle: {
+    fontSize: 13,
+    color: colors.textMuted,
+    textTransform: 'uppercase',
+    marginTop: 10,
+  },
+  hint: { fontSize: 12, color: colors.textFaint },
+  numInput: {
+    borderWidth: 1,
+    borderColor: colors.borderStrong,
+    borderRadius: 6,
+    padding: 8,
+    width: 90,
+    textAlign: 'right',
+    color: colors.text,
+  },
+  numInputSmall: {
+    borderWidth: 1,
+    borderColor: colors.borderStrong,
+    borderRadius: 6,
+    padding: 6,
+    width: 64,
+    textAlign: 'right',
+    color: colors.text,
+  },
+  error: { color: colors.danger },
+  success: { color: colors.on },
+  saveButton: {
+    backgroundColor: colors.accent,
+    padding: 12,
+    borderRadius: 8,
+    alignItems: 'center',
+    marginTop: 4,
+  },
   disabled: { opacity: 0.5 },
-  saveButtonText: { color: 'white', fontWeight: '600' },
-  channelsHeaderRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 10 },
-  channelCard: { borderWidth: 1, borderColor: '#eee', borderRadius: 8, padding: 10, gap: 4 },
-  channelHeaderRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-  channelName: { fontWeight: '600' },
-  readingText: { fontFamily: 'Menlo', fontSize: 12 },
+  saveButtonText: { color: colors.textOnAccent, fontWeight: '600' },
+  channelsHeaderRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginTop: 10,
+  },
+  channelCard: {
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: 8,
+    padding: 10,
+    gap: 4,
+  },
+  channelHeaderRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  channelName: { color: colors.text, fontWeight: '600' },
+  readingText: { color: colors.text, fontFamily: 'Menlo', fontSize: 12 },
   smallButton: {
     paddingVertical: 6,
     paddingHorizontal: 10,
     borderRadius: 8,
     borderWidth: 1,
-    borderColor: '#2563eb',
+    borderColor: colors.accent,
     alignItems: 'center',
   },
-  smallButtonText: { color: '#2563eb', fontWeight: '600', fontSize: 12 },
+  smallButtonText: { color: colors.accent, fontWeight: '600', fontSize: 12 },
 });

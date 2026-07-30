@@ -6,67 +6,111 @@
 
 /* --- enum <-> string tables --- */
 
-static const char *const OUTPUT_FUNCTION_NAMES[MC_OUT_FUNC_COUNT] = {
-    [MC_OUT_FUNC_NONE] = "none",
-    [MC_OUT_FUNC_HEADLIGHT_HI] = "headlight_hi",
-    [MC_OUT_FUNC_HEADLIGHT_LO] = "headlight_lo",
-    [MC_OUT_FUNC_BRAKE] = "brake",
-    [MC_OUT_FUNC_TURN_L] = "turn_l",
-    [MC_OUT_FUNC_TURN_R] = "turn_r",
-    [MC_OUT_FUNC_HORN] = "horn",
-    [MC_OUT_FUNC_IGNITION] = "ignition",
-    [MC_OUT_FUNC_STARTER] = "starter",
-    [MC_OUT_FUNC_AUX] = "aux",
+static const char *const BEHAVIOUR_NAMES[MC_OUT_BEHAVIOUR_COUNT] = {
+    [MC_OUT_BEHAVIOUR_TOGGLE] = "toggle",
+    [MC_OUT_BEHAVIOUR_MOMENTARY] = "momentary",
+    [MC_OUT_BEHAVIOUR_BLINK] = "blink",
+    [MC_OUT_BEHAVIOUR_FLASHER] = "flasher",
 };
 
-static const char *function_to_string(mc_output_function_t f)
+static const char *behaviour_to_string(mc_output_behaviour_t b)
 {
-    if (f < 0 || f >= MC_OUT_FUNC_COUNT || OUTPUT_FUNCTION_NAMES[f] == NULL) {
-        return "none";
+    if ((int)b < 0 || b >= MC_OUT_BEHAVIOUR_COUNT || BEHAVIOUR_NAMES[b] == NULL) {
+        return "toggle";
     }
-    return OUTPUT_FUNCTION_NAMES[f];
+    return BEHAVIOUR_NAMES[b];
 }
 
-static mc_output_function_t function_from_string(const char *s)
-{
-    if (s == NULL) {
-        return MC_OUT_FUNC_NONE;
-    }
-    for (int i = 0; i < MC_OUT_FUNC_COUNT; i++) {
-        if (OUTPUT_FUNCTION_NAMES[i] != NULL && strcmp(OUTPUT_FUNCTION_NAMES[i], s) == 0) {
-            return (mc_output_function_t)i;
-        }
-    }
-    return MC_OUT_FUNC_NONE;
-}
-
-static const char *const OUTPUT_MODE_NAMES[] = {
-    [MC_OUT_MODE_OFF] = "off",
-    [MC_OUT_MODE_ON] = "on",
-    [MC_OUT_MODE_PWM] = "pwm",
-    [MC_OUT_MODE_FLASH_TURN] = "flash_turn",
-    [MC_OUT_MODE_FLASH_BRAKE] = "flash_brake",
-};
-#define OUTPUT_MODE_NAMES_COUNT (sizeof(OUTPUT_MODE_NAMES) / sizeof(OUTPUT_MODE_NAMES[0]))
-
-static const char *mode_to_string(mc_output_mode_t m)
-{
-    if ((size_t)m >= OUTPUT_MODE_NAMES_COUNT || OUTPUT_MODE_NAMES[m] == NULL) {
-        return "on";
-    }
-    return OUTPUT_MODE_NAMES[m];
-}
-
-static mc_output_mode_t mode_from_string(const char *s)
+static mc_output_behaviour_t behaviour_from_string(const char *s)
 {
     if (s != NULL) {
-        for (size_t i = 0; i < OUTPUT_MODE_NAMES_COUNT; i++) {
-            if (OUTPUT_MODE_NAMES[i] != NULL && strcmp(OUTPUT_MODE_NAMES[i], s) == 0) {
-                return (mc_output_mode_t)i;
+        for (int i = 0; i < MC_OUT_BEHAVIOUR_COUNT; i++) {
+            if (BEHAVIOUR_NAMES[i] != NULL && strcmp(BEHAVIOUR_NAMES[i], s) == 0) {
+                return (mc_output_behaviour_t)i;
             }
         }
     }
-    return MC_OUT_MODE_ON; /* matches mc_output_config_default()'s default */
+    return MC_OUT_BEHAVIOUR_TOGGLE;
+}
+
+static const char *indicator_to_string(mc_indicator_side_t side)
+{
+    switch (side) {
+    case MC_INDICATOR_LEFT:  return "left";
+    case MC_INDICATOR_RIGHT: return "right";
+    default:                 return "none";
+    }
+}
+
+static mc_indicator_side_t indicator_from_string(const char *s)
+{
+    if (s != NULL) {
+        if (strcmp(s, "left") == 0)  return MC_INDICATOR_LEFT;
+        if (strcmp(s, "right") == 0) return MC_INDICATOR_RIGHT;
+    }
+    return MC_INDICATOR_NONE;
+}
+
+/* --- schema_version <= 5 compatibility ---
+ *
+ * Up to v5 a channel carried `function` (a fixed taxonomy) and `mode`. v6
+ * replaced both with a free-text name, a `behaviour`, and explicit role
+ * flags, because the taxonomy forced riders to mislabel channels to get the
+ * behaviour they wanted — and, worse, silently derived "never shed this under
+ * low voltage" from the headlight tags, so any other name was sheddable.
+ *
+ * Rather than a versioned migration pass, the parser simply falls back to the
+ * legacy keys when the new ones are absent (mc_config.h's tolerant-parse
+ * doctrine). Mapping, chosen so an existing bike keeps behaving identically:
+ *
+ *   ignition      -> is_ignition + essential
+ *   brake         -> is_brake    + essential
+ *   headlight_hi  -> essential          (this is the AGENTS.md #1 case)
+ *   headlight_lo  -> essential
+ *   turn_l        -> indicator=left  + hazard_member
+ *   turn_r        -> indicator=right + hazard_member
+ *   starter       -> is_starter
+ *   horn/aux/none -> no flags (they never carried any logic)
+ *
+ *   mode on/pwm   -> behaviour toggle   (pwm becomes duty<100, a modifier)
+ *   mode off      -> behaviour toggle   (commanded_on already carries "off")
+ *   flash_turn    -> behaviour blink
+ *   flash_brake   -> behaviour flasher
+ *   momentary:true-> behaviour momentary (the v5 bool)
+ */
+static void apply_legacy_function(const char *fn, mc_output_channel_config_t *ch)
+{
+    if (fn == NULL) {
+        return;
+    }
+    if (strcmp(fn, "ignition") == 0) {
+        ch->is_ignition = true;
+        ch->essential = true;
+    } else if (strcmp(fn, "brake") == 0) {
+        ch->is_brake = true;
+        ch->essential = true;
+    } else if (strcmp(fn, "headlight_hi") == 0 || strcmp(fn, "headlight_lo") == 0) {
+        ch->essential = true;
+    } else if (strcmp(fn, "turn_l") == 0) {
+        ch->indicator = MC_INDICATOR_LEFT;
+        ch->hazard_member = true;
+    } else if (strcmp(fn, "turn_r") == 0) {
+        ch->indicator = MC_INDICATOR_RIGHT;
+        ch->hazard_member = true;
+    } else if (strcmp(fn, "starter") == 0) {
+        ch->is_starter = true;
+    }
+    /* horn, aux, none: pure labels, nothing to carry over. */
+}
+
+static mc_output_behaviour_t behaviour_from_legacy_mode(const char *mode)
+{
+    if (mode == NULL) {
+        return MC_OUT_BEHAVIOUR_TOGGLE;
+    }
+    if (strcmp(mode, "flash_turn") == 0)  return MC_OUT_BEHAVIOUR_BLINK;
+    if (strcmp(mode, "flash_brake") == 0) return MC_OUT_BEHAVIOUR_FLASHER;
+    return MC_OUT_BEHAVIOUR_TOGGLE; /* on, pwm, off */
 }
 
 static const char *combo_type_to_string(mc_combo_type_t t)
@@ -80,6 +124,61 @@ static mc_combo_type_t combo_type_from_string(const char *s)
         return MC_COMBO_CHORD;
     }
     return MC_COMBO_SEQUENCE;
+}
+
+/* An action list serializes as a JSON array of ids; an unbound list is `[]`
+ * rather than being omitted, so the arrays stay positional (index == button
+ * number) and a reader never has to guess which button an entry belongs to. */
+static cJSON *action_list_to_json(const mc_action_list_t *list)
+{
+    cJSON *arr = cJSON_CreateArray();
+    if (arr == NULL) {
+        return NULL;
+    }
+    for (uint8_t i = 0; i < list->count && i < MC_ACTION_LIST_MAX; i++) {
+        cJSON_AddItemToArray(arr, cJSON_CreateNumber(list->actions[i]));
+    }
+    return arr;
+}
+
+static void add_action_list(cJSON *parent, const char *key, const mc_action_list_t *list)
+{
+    cJSON *arr = action_list_to_json(list);
+    if (arr != NULL) {
+        cJSON_AddItemToObject(parent, key, arr);
+    }
+}
+
+/* Reads an action list, accepting either the schema_version 4+ form (an array
+ * of ids) or the version 3 form (a single number, meaning a one-entry list).
+ * Accepting both is what makes the v3 -> v4 migration free: a config written
+ * by older firmware parses with no separate migration pass, consistent with
+ * mc_config.h's "tolerant parse instead of versioned migration" doctrine.
+ * Action id 0 (MC_ACTION_NONE) is treated as "unbound", not as a real entry,
+ * so a v3 `0` becomes an empty list rather than a list containing 0. */
+static void parse_action_list(const cJSON *item, mc_action_list_t *out)
+{
+    out->count = 0;
+    if (item == NULL) {
+        return;
+    }
+    if (cJSON_IsNumber(item)) {
+        if (item->valuedouble > 0) {
+            out->actions[0] = (mc_action_id_t)item->valuedouble;
+            out->count = 1;
+        }
+        return;
+    }
+    if (!cJSON_IsArray(item)) {
+        return;
+    }
+    int n = cJSON_GetArraySize(item);
+    for (int i = 0; i < n && out->count < MC_ACTION_LIST_MAX; i++) {
+        const cJSON *a = cJSON_GetArrayItem(item, i);
+        if (cJSON_IsNumber(a) && a->valuedouble > 0) {
+            out->actions[out->count++] = (mc_action_id_t)a->valuedouble;
+        }
+    }
 }
 
 /* --- serialize --- */
@@ -99,11 +198,16 @@ char *mc_config_to_json(const mc_config_t *cfg)
     for (int i = 0; i < MC_OUTPUT_COUNT; i++) {
         const mc_output_channel_config_t *ch = &cfg->outputs.channels[i];
         cJSON *obj = cJSON_CreateObject();
-        cJSON_AddStringToObject(obj, "function", function_to_string(ch->function));
         cJSON_AddStringToObject(obj, "name", ch->name);
-        cJSON_AddStringToObject(obj, "mode", mode_to_string(ch->mode));
+        cJSON_AddStringToObject(obj, "behaviour", behaviour_to_string(ch->behaviour));
         cJSON_AddNumberToObject(obj, "pwm_duty_pct", ch->pwm_duty_pct);
         cJSON_AddBoolToObject(obj, "commanded_on", ch->commanded_on);
+        cJSON_AddBoolToObject(obj, "essential", ch->essential);
+        cJSON_AddBoolToObject(obj, "is_ignition", ch->is_ignition);
+        cJSON_AddBoolToObject(obj, "is_starter", ch->is_starter);
+        cJSON_AddBoolToObject(obj, "is_brake", ch->is_brake);
+        cJSON_AddStringToObject(obj, "indicator", indicator_to_string(ch->indicator));
+        cJSON_AddBoolToObject(obj, "hazard_member", ch->hazard_member);
         cJSON_AddItemToArray(channels, obj);
     }
     cJSON_AddNumberToObject(outputs, "starter_interlock_input", cfg->outputs.starter_interlock_input);
@@ -131,17 +235,22 @@ char *mc_config_to_json(const mc_config_t *cfg)
             cJSON_AddItemToArray(buttons, cJSON_CreateNumber(def->buttons[b]));
         }
         cJSON_AddNumberToObject(obj, "window_ms", def->window_ms);
-        cJSON_AddNumberToObject(obj, "action_id", def->action_id);
+        add_action_list(obj, "actions", &def->actions);
         cJSON_AddItemToArray(combos, obj);
     }
 
+    /* Per-button action lists. Emitted as arrays-of-arrays at schema_version
+     * 4 (they were arrays of plain numbers at 3) — see parse_inputs(), which
+     * still accepts either form so a v3 config loads unchanged. */
     cJSON *sp = cJSON_AddArrayToObject(inputs, "short_press_action");
     cJSON *lp = cJSON_AddArrayToObject(inputs, "long_press_action");
     cJSON *dp = cJSON_AddArrayToObject(inputs, "double_press_action");
+    cJSON *names = cJSON_AddArrayToObject(inputs, "names");
     for (int i = 0; i < MC_INPUT_COUNT; i++) {
-        cJSON_AddItemToArray(sp, cJSON_CreateNumber(cfg->inputs.short_press_action[i]));
-        cJSON_AddItemToArray(lp, cJSON_CreateNumber(cfg->inputs.long_press_action[i]));
-        cJSON_AddItemToArray(dp, cJSON_CreateNumber(cfg->inputs.double_press_action[i]));
+        cJSON_AddItemToArray(sp, action_list_to_json(&cfg->inputs.short_press_actions[i]));
+        cJSON_AddItemToArray(lp, action_list_to_json(&cfg->inputs.long_press_actions[i]));
+        cJSON_AddItemToArray(dp, action_list_to_json(&cfg->inputs.double_press_actions[i]));
+        cJSON_AddItemToArray(names, cJSON_CreateString(cfg->inputs.names[i]));
     }
 
     /* diagnostics */
@@ -196,22 +305,53 @@ static mc_config_result_t parse_outputs(const cJSON *outputs, mc_config_t *out)
             }
             mc_output_channel_config_t *ch = &out->outputs.channels[i];
 
-            const cJSON *func = cJSON_GetObjectItemCaseSensitive(obj, "function");
-            ch->function = function_from_string(cJSON_IsString(func) ? func->valuestring : NULL);
-
             const cJSON *name = cJSON_GetObjectItemCaseSensitive(obj, "name");
             if (cJSON_IsString(name) && name->valuestring != NULL) {
                 strncpy(ch->name, name->valuestring, MC_OUTPUT_NAME_MAX - 1);
                 ch->name[MC_OUTPUT_NAME_MAX - 1] = '\0';
             }
 
-            const cJSON *mode = cJSON_GetObjectItemCaseSensitive(obj, "mode");
-            ch->mode = mode_from_string(cJSON_IsString(mode) ? mode->valuestring : NULL);
-
             ch->pwm_duty_pct = (uint8_t)get_uint(obj, "pwm_duty_pct", ch->pwm_duty_pct);
 
             const cJSON *cmd = cJSON_GetObjectItemCaseSensitive(obj, "commanded_on");
             ch->commanded_on = cJSON_IsTrue(cmd);
+
+            /* schema_version 6: behaviour + explicit role flags. A document
+             * without them is v5-or-older, so derive from `function`/`mode`
+             * (and v5's `momentary` bool) instead — see the mapping comment
+             * at the top of this file. Reading the new keys first means a v6
+             * document never consults the legacy ones. */
+            const cJSON *beh = cJSON_GetObjectItemCaseSensitive(obj, "behaviour");
+            if (cJSON_IsString(beh)) {
+                ch->behaviour = behaviour_from_string(beh->valuestring);
+            } else {
+                const cJSON *mode = cJSON_GetObjectItemCaseSensitive(obj, "mode");
+                ch->behaviour = behaviour_from_legacy_mode(
+                    cJSON_IsString(mode) ? mode->valuestring : NULL);
+                const cJSON *mom = cJSON_GetObjectItemCaseSensitive(obj, "momentary");
+                if (cJSON_IsTrue(mom)) {
+                    ch->behaviour = MC_OUT_BEHAVIOUR_MOMENTARY;
+                }
+            }
+
+            const cJSON *ess = cJSON_GetObjectItemCaseSensitive(obj, "essential");
+            const cJSON *ign = cJSON_GetObjectItemCaseSensitive(obj, "is_ignition");
+            const cJSON *stt = cJSON_GetObjectItemCaseSensitive(obj, "is_starter");
+            const cJSON *brk = cJSON_GetObjectItemCaseSensitive(obj, "is_brake");
+            const cJSON *ind = cJSON_GetObjectItemCaseSensitive(obj, "indicator");
+            const cJSON *haz = cJSON_GetObjectItemCaseSensitive(obj, "hazard_member");
+            bool has_roles = (ess || ign || stt || brk || ind || haz);
+            if (has_roles) {
+                ch->essential = cJSON_IsTrue(ess);
+                ch->is_ignition = cJSON_IsTrue(ign);
+                ch->is_starter = cJSON_IsTrue(stt);
+                ch->is_brake = cJSON_IsTrue(brk);
+                ch->indicator = indicator_from_string(cJSON_IsString(ind) ? ind->valuestring : NULL);
+                ch->hazard_member = cJSON_IsTrue(haz);
+            } else {
+                const cJSON *func = cJSON_GetObjectItemCaseSensitive(obj, "function");
+                apply_legacy_function(cJSON_IsString(func) ? func->valuestring : NULL, ch);
+            }
         }
     }
 
@@ -280,26 +420,43 @@ static mc_config_result_t parse_inputs(const cJSON *inputs, mc_config_t *out)
                 }
             }
             def->window_ms = get_uint(obj, "window_ms", 0);
-            def->action_id = (mc_action_id_t)get_uint(obj, "action_id", 0);
+            /* "actions" at schema_version 4; "action_id" was the v3 spelling
+             * and is still honoured so old configs keep their bindings. */
+            const cJSON *acts = cJSON_GetObjectItemCaseSensitive(obj, "actions");
+            if (acts == NULL) {
+                acts = cJSON_GetObjectItemCaseSensitive(obj, "action_id");
+            }
+            parse_action_list(acts, &def->actions);
             out->inputs.combo_count++;
         }
     }
 
     const char *action_keys[3] = { "short_press_action", "long_press_action", "double_press_action" };
-    mc_action_id_t *action_arrays[3] = {
-        out->inputs.short_press_action,
-        out->inputs.long_press_action,
-        out->inputs.double_press_action,
+    mc_action_list_t *action_arrays[3] = {
+        out->inputs.short_press_actions,
+        out->inputs.long_press_actions,
+        out->inputs.double_press_actions,
     };
     for (int k = 0; k < 3; k++) {
         const cJSON *arr = cJSON_GetObjectItemCaseSensitive(inputs, action_keys[k]);
         if (cJSON_IsArray(arr)) {
             int n = cJSON_GetArraySize(arr);
             for (int i = 0; i < n && i < MC_INPUT_COUNT; i++) {
-                const cJSON *item = cJSON_GetArrayItem(arr, i);
-                if (cJSON_IsNumber(item) && item->valuedouble >= 0) {
-                    action_arrays[k][i] = (mc_action_id_t)item->valuedouble;
-                }
+                /* parse_action_list() takes either an array (v4) or a bare
+                 * number (v3), so both forms land here unchanged. */
+                parse_action_list(cJSON_GetArrayItem(arr, i), &action_arrays[k][i]);
+            }
+        }
+    }
+
+    const cJSON *names = cJSON_GetObjectItemCaseSensitive(inputs, "names");
+    if (cJSON_IsArray(names)) {
+        int n = cJSON_GetArraySize(names);
+        for (int i = 0; i < n && i < MC_INPUT_COUNT; i++) {
+            const cJSON *item = cJSON_GetArrayItem(names, i);
+            if (cJSON_IsString(item) && item->valuestring != NULL) {
+                strncpy(out->inputs.names[i], item->valuestring, MC_INPUT_NAME_MAX - 1);
+                out->inputs.names[i][MC_INPUT_NAME_MAX - 1] = '\0';
             }
         }
     }

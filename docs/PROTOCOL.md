@@ -237,10 +237,13 @@ defaults; unknown `function` strings map to `"none"`.
 
 ```json
 {
-  "schema_version": 3,
+  "schema_version": 6,
   "outputs": {
     "channels": [
-      { "function": "headlight_lo", "name": "Low Beam", "mode": "on", "pwm_duty_pct": 100, "commanded_on": false }
+      { "name": "Low Beam", "behaviour": "toggle", "pwm_duty_pct": 100,
+        "commanded_on": false, "essential": true, "is_ignition": false,
+        "is_starter": false, "is_brake": false, "indicator": "none",
+        "hazard_member": false }
     ],
     "starter_interlock_input": -1,
     "brake_switch_input": -1,
@@ -253,11 +256,12 @@ defaults; unknown `function` strings map to `"none"`.
   "inputs": {
     "timing": { "debounce_ms": 20, "long_press_ms": 600, "double_press_gap_ms": 350 },
     "combos": [
-      { "type": "sequence", "buttons": [0, 1, 0, 1], "window_ms": 5000, "action_id": 42 }
+      { "type": "sequence", "buttons": [0, 1, 0, 1], "window_ms": 5000, "actions": [42] }
     ],
-    "short_press_action": [0, 0, 0, 0, 0, 0, 0, 0],
-    "long_press_action": [0, 0, 0, 0, 0, 0, 0, 0],
-    "double_press_action": [0, 0, 0, 0, 0, 0, 0, 0]
+    "short_press_action": [[], [256], [], [], [], [], [], []],
+    "long_press_action": [[], [], [], [], [], [], [], []],
+    "double_press_action": [[], [], [], [], [], [], [], []],
+    "names": ["Left Bar Top", "", "", "", "", "", "", ""]
   },
   "diagnostics": {
     "channels": [
@@ -272,22 +276,143 @@ defaults; unknown `function` strings map to `"none"`.
 ```
 
 - `outputs.channels` has exactly 12 entries (channels 0–11).
-- `function` ∈ `none, headlight_hi, headlight_lo, brake, turn_l, turn_r, horn, ignition, starter, aux`.
-- `mode` ∈ `off, on, pwm, flash_turn, flash_brake` (see §13). Unknown/absent
-  maps to `on`, not `off` — `on` (plain digital) is the default electrical
-  behavior for a freshly-assigned channel.
-- `pwm_duty_pct`: 1–100, meaningful only when `mode` is `pwm`.
+- **`schema_version` 6 replaced `function` and `mode`** with a free-text
+  `name`, a `behaviour`, and explicit role flags. The old function taxonomy
+  (`headlight_hi`, `horn`, `aux`, …) is gone: it forced a rider to mislabel a
+  channel to get the behaviour they wanted, and — the reason it had to go —
+  it hid a safety property inside a label, since a channel was only protected
+  from the low-voltage cutoff if it happened to be tagged as a headlight.
+
+  A document without the new keys is v5-or-older and is migrated on parse
+  (see below), so old configs keep working with no separate migration step.
+
+- `name`: free text, ≤23 characters plus NUL. Cosmetic — no firmware logic
+  keys off a name.
+- `behaviour` ∈ `toggle, momentary, blink, flasher`. Unknown/absent maps to
+  `toggle`.
+  - `toggle` — latching on/off.
+  - `momentary` — on only while its trigger is held. Driven by a **hold**
+    binding, a **held chord**, or a maintained switch; a single or double tap
+    will never fire one, because those are edge events with nothing to hold.
+  - `blink` — flashes at `turn_flash_period_ms` while on.
+  - `flasher` — an attention-pulse burst on switch-on, then solid.
+- `pwm_duty_pct`: 1–100. Below 100 dims the channel whenever it is driven on.
+  Now a **modifier** rather than a mode, so it composes with `toggle` and
+  `momentary`; never applied to `blink`/`flasher`, which are full on/off by
+  AGENTS.md's PWM/flasher rule.
+- **Role flags** — the only channel properties carrying safety logic:
+  - `essential` — never switched off by the low-voltage cutoff (AGENTS.md #1).
+    `is_ignition` and `is_brake` are treated as essential regardless, so a
+    config that forgets to set it still cannot shed them.
+  - `is_ignition` — the immobilizer's target, and how the lock knows the bike
+    is running. At most one channel (validated).
+  - `is_starter` — never commandable from the app, inhibited while the engine
+    runs, force-dropped the instant it starts, and gated behind
+    `starter_interlock_input`. At most one channel (validated).
+  - `is_brake` — the brake light; target of the `brake_switch_input`
+    pass-through.
+  - `indicator` ∈ `none, left, right` — turn mutual exclusion and the
+    auto-cancel timer apply **only** to these.
+  - `hazard_member` — blinks together with the hazards. Anything may join (a
+    DRL, an aux light) without becoming an indicator, so joining the group
+    grants no mutual exclusion or auto-cancel. `HAZARD_PRESS` switches every
+    member together, and is `REJECTED` only when the group is empty.
+
+    **While the hazards are running, every member blinks regardless of its own
+    `behaviour`**, all in one shared phase. A DRL set to `toggle` is therefore
+    steady in normal use and flashes with the indicators during a hazard stop —
+    which is the point of the group, and why the rider is not asked to set
+    `behaviour: blink` on it (that would make it blink as a running light too).
+    Hazard mode ends on the next `HAZARD_PRESS`, or as soon as any member is
+    commanded individually — signalling a turn, or switching the DRL on by
+    itself, means the rider is no longer running hazards.
+
+  **Migration from `schema_version` ≤ 5.** When the v6 keys are absent, roles
+  are derived from the legacy `function` and behaviour from the legacy `mode`
+  (plus v5's `momentary` bool):
+
+  | legacy `function` | becomes |
+  |---|---|
+  | `ignition` | `is_ignition` + `essential` |
+  | `brake` | `is_brake` + `essential` |
+  | `headlight_hi` / `headlight_lo` | `essential` |
+  | `turn_l` / `turn_r` | `indicator` + `hazard_member` |
+  | `starter` | `is_starter` |
+  | `horn` / `aux` / `none` | nothing — they never carried logic |
+
+  | legacy `mode` | becomes |
+  |---|---|
+  | `on`, `pwm`, `off` | `toggle` (`pwm` survives as `pwm_duty_pct`) |
+  | `flash_turn` | `blink` |
+  | `flash_brake` | `flasher` |
+
 - `starter_interlock_input` is an input index (0–7) or `-1` for none.
 - `brake_switch_input`: an input index (0–7) or `-1` for none — see §13.
 - `turn_auto_cancel_ms`, `turn_flash_period_ms`, `brake_flash_pulse_count`,
   `brake_flash_pulse_on_ms`, `brake_flash_pulse_off_ms`: see §13.
 - `combos[].type` ∈ `chord, sequence`; `buttons` are input indices (0–7).
+- **Action ids** (`short_press_action[]`, `long_press_action[]`,
+  `double_press_action[]`, `combos[].action_id`) are `uint16`. All four
+  binding paths accept the same vocabulary and are dispatched identically:
+
+  | id | meaning |
+  |---|---|
+  | `0` | unbound |
+  | `1` | toggle the channel whose `function` is `turn_l` |
+  | `2` | toggle the channel whose `function` is `turn_r` |
+  | `3` | toggle hazards (both turn channels) |
+  | `256 + N` | toggle output channel `N` directly, `0 ≤ N < 12` |
+
+  Ids `1`–`3` resolve by `function` and so depend on a channel being assigned
+  that function; `256 + N` addresses a channel directly and always works,
+  which is what a "bind this button to that output" UI should emit. All 12
+  outputs are electrically identical, so direct addressing is the general
+  case and `1`–`3` exist only because turn/hazard carry flasher-pattern
+  behaviour beyond a plain toggle.
+
+  An unrecognised id is ignored, not an import error — a config written by a
+  newer firmware stays loadable (§ tolerant-parse rule above).
+
+  **Each binding is a list, not a single id** (`schema_version` 4): one
+  trigger may switch up to 4 outputs, applied left to right. So
+  `short_press_action` is an array of 8 arrays, indexed by button, and a
+  combo carries `actions` rather than `action_id`. An empty list means
+  unbound. `0` is never a valid list entry — it is the "unbound" sentinel and
+  is dropped on import.
+
+  For compatibility, the parser also accepts the `schema_version` 3 spelling
+  of both — a bare number instead of an array, and `action_id` instead of
+  `actions` — treating a non-zero value as a one-element list. That is the
+  entire v3 → v4 migration; there is no separate migration pass.
+
+- `inputs.names` (added at `schema_version` 4) is 8 strings, indexed by
+  input, truncated to 23 characters plus NUL. Purely cosmetic: nothing in the
+  firmware dispatches on a button name. Empty means unnamed, and a client
+  should fall back to "Button N".
+- A matched **chord** suppresses its member buttons' own single-press
+  bindings, so binding "L+R together" to hazards does not also fire L's and
+  R's individual bindings. The press is still reported with
+  `action_suppressed` set (see `INPUT_EVENT` below) — it is only the *action*
+  that is skipped, never the press itself, because the unlock cheat-code is
+  fed by those presses and must never become unreachable. A matched
+  **sequence** does not suppress anything, since its member presses were
+  already delivered before the sequence completed.
+- At most `8` chord + sequence definitions combined (`MC_COMBO_MAX_DEFS`).
+  A known, deliberate limit — see `mc_types.h`.
+
+  Every binding is applied with source `LOCAL`, so it is still subject to the
+  immobilizer, the starter engine-running/interlock guards, and turn mutual
+  exclusion. A binding cannot switch a channel the COMMAND channel could not.
+  In particular, binding a button to a `starter` channel is permitted (that is
+  the hardware-button path) while the COMMAND channel remains blocked from it.
 - `diagnostics.channels` has exactly 12 entries (channels 0–11) — per-channel
   open-load/overcurrent thresholds (§12), added at `schema_version` 2.
   **Board calibration is deliberately not here** — it has its own dedicated
   ops (§12) and never rides a config export/import, since it describes one
   physical board's analog sense lines, not a portable setting.
-- `schema_version` is 3 (grew `outputs` again — see above).
+- `schema_version` is 6 (4 added input action lists + button names, 5 added
+  per-channel `momentary`, 6 replaced `function`/`mode` with `behaviour` +
+  role flags and folded `momentary` into it).
 
 ## 10. OTA channel (`4`) — authenticated
 
@@ -883,6 +1008,37 @@ phone polling at a human-relevant rate has no real use for it anyway.
   ignition output while the immobilizer is `LOCKED` (§11).
 - Authentication is one-way (client proves possession of an enrolled key to
   the device). A future revision may add device-to-client authentication.
+
+## 14.1 Button identification (COMMAND channel `2`) — authenticated
+
+A rider who has just wired eight handlebar buttons has no idea which one is
+input 3. Learn mode answers that: while it is on, every debounced press is
+pushed to the requesting session, so the app can say "that was input 5" and
+offer to name it (`inputs.names`, §9).
+
+| Direction | Opcode | Payload |
+|---|---|---|
+| → device | `0x12` `INPUT_LEARN` | `enable:1` (0 = off, non-zero = on) |
+| ← device | `0x92` `INPUT_EVENT` | `button:1` `press_type:1` `action_suppressed:1` |
+
+- `press_type`: `0` short, `1` long, `2` double.
+- `action_suppressed`: `1` when a chord consumed this press, so its own
+  binding deliberately did not fire (§9). Lets the UI explain the behaviour
+  rather than looking broken.
+- Replies to `INPUT_LEARN` with the usual `COMMAND_RESULT`; a missing
+  `enable` byte is `BAD_REQUEST`.
+
+Learn mode is **off by default and opt-in per session**, never a broadcast:
+the board must not stream an event for every handlebar press for the length
+of a ride (radio and battery discipline, AGENTS.md #7). The flag lives in the
+session, so a disconnect always ends it and no timeout is needed. Enabling it
+does not change dispatch — bindings still fire normally; this is telemetry
+running alongside them, not instead of them.
+
+`INPUT_EVENT` is one of the few genuinely unsolicited device-to-client
+frames: it arrives with no preceding request, at whatever rate the rider
+presses buttons. A client must tolerate it appearing between the request and
+reply of any other COMMAND-channel op.
 
 ## 15. Event log (COMMAND channel `2`) — authenticated
 

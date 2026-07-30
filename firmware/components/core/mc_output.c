@@ -6,17 +6,16 @@ void mc_output_config_default(mc_output_config_t *out)
 {
     memset(out, 0, sizeof(*out));
     for (int i = 0; i < MC_OUTPUT_COUNT; i++) {
-        out->channels[i].function = MC_OUT_FUNC_NONE;
-        /* MC_OUT_MODE_ON, not OFF: mode now independently describes a
-         * channel's electrical behavior *when* commanded on (plain digital
-         * vs PWM-dimmed vs a flasher pattern) rather than being derived
-         * from commanded_on the way it once was (mc_output_set()
-         * used to force mode to mirror `on` every call — removed, since a
-         * flasher-mode channel must keep its mode across on/off toggles).
-         * MC_OUT_MODE_ON is the right default for a freshly-assigned
-         * channel: ordinary digital on/off until an installer opts a
-         * channel into PWM/flasher mode via config. */
-        out->channels[i].mode = MC_OUT_MODE_ON;
+        /* TOGGLE, and every role flag clear: a fresh channel is an
+         * unnamed, latching, non-essential output with no special powers
+         * until the rider gives it some. */
+        out->channels[i].behaviour = MC_OUT_BEHAVIOUR_TOGGLE;
+        out->channels[i].essential = false;
+        out->channels[i].is_ignition = false;
+        out->channels[i].is_starter = false;
+        out->channels[i].is_brake = false;
+        out->channels[i].indicator = MC_INDICATOR_NONE;
+        out->channels[i].hazard_member = false;
         out->channels[i].commanded_on = false;
         out->channels[i].name[0] = '\0';
         out->channels[i].pwm_duty_pct = MC_OUTPUT_DEFAULT_PWM_DUTY_PCT;
@@ -45,30 +44,52 @@ void mc_output_init(mc_output_engine_t *eng, const mc_output_config_t *config, m
  * does this channel's mode say to do with it right now". Shared by both
  * so they can never disagree; mc_diag depends on this staying accurate
  * down to the blink phase, not just commanded_on (see mc_output.h). */
+/* The on-half of the blink cycle at `now_ms`. Shared by the BLINK behaviour
+ * and by hazard mode, so a DRL joining the hazards flashes in phase with the
+ * indicators rather than on its own schedule. */
+static bool blink_phase(const mc_output_engine_t *eng, uint32_t now_ms)
+{
+    uint16_t period = eng->config.turn_flash_period_ms;
+    if (period == 0) {
+        return true; /* malformed config; fail open to solid rather than divide by zero */
+    }
+    uint16_t half = period / 2;
+    if (half == 0) {
+        return true;
+    }
+    return ((now_ms / half) % 2) == 0;
+}
+
 static bool compute_driven_on(const mc_output_engine_t *eng, uint8_t channel, uint32_t now_ms)
 {
     const mc_output_channel_config_t *ch = &eng->config.channels[channel];
     if (!ch->commanded_on) {
         return false;
     }
-    switch (ch->mode) {
-    case MC_OUT_MODE_OFF:
-        return false;
-    case MC_OUT_MODE_ON:
-    case MC_OUT_MODE_PWM:
-        return true;
-    case MC_OUT_MODE_FLASH_TURN: {
-        uint16_t period = eng->config.turn_flash_period_ms;
-        if (period == 0) {
-            return true; /* malformed config; fail open to solid rather than divide by zero */
-        }
-        uint16_t half = period / 2;
-        if (half == 0) {
-            return true;
-        }
-        return ((now_ms / half) % 2) == 0;
+    /* Hazards override a member's own behaviour for as long as they are
+     * running. Membership decides WHICH channels join; it must also decide
+     * HOW they behave while joined, or a solid-by-nature channel (a DRL, an
+     * aux light) sits steady while the indicators flash beside it — which is
+     * not "blinking with the hazards" in any useful sense.
+     *
+     * Deliberately not solved by asking the rider to set the channel's
+     * behaviour to BLINK: that would make the DRL blink during ordinary
+     * running-light use too. Normal behaviour and hazard behaviour are
+     * different questions, so hazard mode answers the second one itself. */
+    if (eng->hazard_active && ch->hazard_member) {
+        return blink_phase(eng, now_ms);
     }
-    case MC_OUT_MODE_FLASH_BRAKE: {
+
+    switch (ch->behaviour) {
+    /* MOMENTARY is driven purely by commanded_on: the platform tick loop
+     * turns it on and off from the trigger's level, so by the time we get
+     * here it is an ordinary on/off channel. */
+    case MC_OUT_BEHAVIOUR_TOGGLE:
+    case MC_OUT_BEHAVIOUR_MOMENTARY:
+        return true;
+    case MC_OUT_BEHAVIOUR_BLINK:
+        return blink_phase(eng, now_ms);
+    case MC_OUT_BEHAVIOUR_FLASHER: {
         uint8_t count = eng->config.brake_flash_pulse_count;
         uint16_t on_ms = eng->config.brake_flash_pulse_on_ms;
         uint16_t off_ms = eng->config.brake_flash_pulse_off_ms;
@@ -100,7 +121,12 @@ static void apply_hal_state(mc_output_engine_t *eng, uint8_t channel, uint32_t n
     }
     bool driven_on = mc_output_get_actual_state(eng, channel, now_ms);
     const mc_output_channel_config_t *ch = &eng->config.channels[channel];
-    if (driven_on && ch->mode == MC_OUT_MODE_PWM && eng->hal.set_duty != NULL) {
+    /* Dimming composes with any behaviour, but never with a pattern: BLINK
+     * and FLASHER are full on/off by AGENTS.md's PWM/flasher rule. */
+    bool dimmed = ch->pwm_duty_pct < 100 &&
+                  (ch->behaviour == MC_OUT_BEHAVIOUR_TOGGLE ||
+                   ch->behaviour == MC_OUT_BEHAVIOUR_MOMENTARY);
+    if (driven_on && dimmed && eng->hal.set_duty != NULL) {
         eng->hal.set_duty(channel, ch->pwm_duty_pct, eng->hal.ctx);
         return;
     }
@@ -138,7 +164,7 @@ static void set_commanded_on_raw(mc_output_engine_t *eng, uint8_t channel, bool 
     mc_output_channel_config_t *ch = &eng->config.channels[channel];
     bool was_on = ch->commanded_on;
     ch->commanded_on = on;
-    if (!was_on && on && ch->mode == MC_OUT_MODE_FLASH_BRAKE) {
+    if (!was_on && on && ch->behaviour == MC_OUT_BEHAVIOUR_FLASHER) {
         eng->brake_burst_started_ms[channel] = now_ms;
     }
     apply_hal_state(eng, channel, now_ms);
@@ -153,23 +179,31 @@ mc_output_result_t mc_output_set(mc_output_engine_t *eng, uint8_t channel, bool 
     mc_output_channel_config_t *ch_cfg = &eng->config.channels[channel];
 
     if (on && eng->immobilized &&
-        (ch_cfg->function == MC_OUT_FUNC_IGNITION || ch_cfg->function == MC_OUT_FUNC_STARTER)) {
+        (ch_cfg->is_ignition || ch_cfg->is_starter)) {
         return MC_OUT_ERR_IMMOBILIZED;
     }
 
-    if (on && ch_cfg->function == MC_OUT_FUNC_STARTER) {
+    if (on && ch_cfg->is_starter) {
         mc_output_result_t err = validate_starter_command(eng, source);
         if (err != MC_OUT_OK) {
             return err;
         }
     }
 
-    bool is_turn = (ch_cfg->function == MC_OUT_FUNC_TURN_L || ch_cfg->function == MC_OUT_FUNC_TURN_R);
+    /* Any deliberate command to a group member ends hazard mode — signalling a
+     * turn, or switching the DRL on by itself, means the rider is no longer
+     * running hazards. Without this the flag could outlive the hazards and
+     * make a later, unrelated switch-on of that channel blink. */
+    if (ch_cfg->hazard_member) {
+        eng->hazard_active = false;
+    }
+
+    bool is_turn = (ch_cfg->indicator != MC_INDICATOR_NONE);
 
     if (is_turn && on) {
-        mc_output_function_t opposite_fn =
-            (ch_cfg->function == MC_OUT_FUNC_TURN_L) ? MC_OUT_FUNC_TURN_R : MC_OUT_FUNC_TURN_L;
-        int opposite = mc_output_find_channel_by_function(&eng->config, opposite_fn);
+        mc_indicator_side_t opposite_side =
+            (ch_cfg->indicator == MC_INDICATOR_LEFT) ? MC_INDICATOR_RIGHT : MC_INDICATOR_LEFT;
+        int opposite = mc_output_find_indicator_channel(&eng->config, opposite_side);
         if (opposite >= 0 && opposite != channel && eng->config.channels[opposite].commanded_on) {
             set_commanded_on_raw(eng, (uint8_t)opposite, false, eng->last_tick_ms);
             eng->turn_auto_cancel_deadline_ms[opposite] = 0;
@@ -199,7 +233,7 @@ bool mc_output_get_actual_state(const mc_output_engine_t *eng, uint8_t channel, 
     if (channel >= MC_OUTPUT_COUNT) {
         return false;
     }
-    if (eng->lv_cutoff && !mc_output_function_is_essential(eng->config.channels[channel].function)) {
+    if (eng->lv_cutoff && !mc_output_channel_is_essential(&eng->config.channels[channel])) {
         return false;
     }
     return compute_driven_on(eng, channel, now_ms);
@@ -207,21 +241,36 @@ bool mc_output_get_actual_state(const mc_output_engine_t *eng, uint8_t channel, 
 
 void mc_output_hazard_press(mc_output_engine_t *eng, uint32_t now_ms)
 {
-    int l = mc_output_find_channel_by_function(&eng->config, MC_OUT_FUNC_TURN_L);
-    int r = mc_output_find_channel_by_function(&eng->config, MC_OUT_FUNC_TURN_R);
-    if (l < 0 && r < 0) {
+    /* The hazard group is whatever the rider marked hazard_member — normally
+     * both indicators, but a DRL or aux light can join, which is why this is
+     * no longer hardcoded to the two turn channels. */
+    int members = 0;
+    bool all_on = true;
+    for (uint8_t ch = 0; ch < MC_OUTPUT_COUNT; ch++) {
+        if (!eng->config.channels[ch].hazard_member) {
+            continue;
+        }
+        members++;
+        if (!eng->config.channels[ch].commanded_on) {
+            all_on = false;
+        }
+    }
+    if (members == 0) {
         return;
     }
-    bool both_on = (l < 0 || eng->config.channels[l].commanded_on) &&
-                   (r < 0 || eng->config.channels[r].commanded_on);
-    bool new_state = !both_on;
-    if (l >= 0) {
-        set_commanded_on_raw(eng, (uint8_t)l, new_state, now_ms);
-        eng->turn_auto_cancel_deadline_ms[l] = 0;
-    }
-    if (r >= 0) {
-        set_commanded_on_raw(eng, (uint8_t)r, new_state, now_ms);
-        eng->turn_auto_cancel_deadline_ms[r] = 0;
+
+    bool new_state = !all_on;
+    /* Hazard mode is on exactly while the group is on. */
+    eng->hazard_active = new_state;
+    for (uint8_t ch = 0; ch < MC_OUTPUT_COUNT; ch++) {
+        if (!eng->config.channels[ch].hazard_member) {
+            continue;
+        }
+        /* Raw: hazards deliberately bypass turn mutual exclusion (both sides
+         * on together is the whole point) and arm no auto-cancel — they stay
+         * on until pressed again, like a real hazard switch. */
+        set_commanded_on_raw(eng, ch, new_state, now_ms);
+        eng->turn_auto_cancel_deadline_ms[ch] = 0;
     }
 }
 
@@ -244,7 +293,28 @@ void mc_output_tick(mc_output_engine_t *eng, uint32_t now_ms)
 
 void mc_output_set_engine_running(mc_output_engine_t *eng, bool running)
 {
+    bool was_running = eng->engine_running;
     eng->engine_running = running;
+
+    /* AGENTS.md #6: the starter is inhibited while the engine is running.
+     * validate_starter_command() only enforces that at COMMAND time, which
+     * leaves the case that actually matters — the starter is already
+     * engaged and the engine catches. A cranking motor left engaged against
+     * a running engine destroys itself, and the rider is mid-start with the
+     * button held, so nothing else is going to drop it. Cut it here, on the
+     * edge, regardless of who commanded it or how it is bound.
+     *
+     * Deliberately unconditional: no immobilizer/lv-cutoff/source check,
+     * because there is no state in which keeping the starter energised while
+     * the engine runs is the safer option. */
+    if (running && !was_running) {
+        for (uint8_t ch = 0; ch < MC_OUTPUT_COUNT; ch++) {
+            if (eng->config.channels[ch].is_starter &&
+                eng->config.channels[ch].commanded_on) {
+                set_commanded_on_raw(eng, ch, false, eng->last_tick_ms);
+            }
+        }
+    }
 }
 
 void mc_output_set_interlock_engaged(mc_output_engine_t *eng, bool engaged)
@@ -268,10 +338,23 @@ void mc_output_set_lv_cutoff(mc_output_engine_t *eng, bool cutoff_active)
     }
 }
 
-int mc_output_find_channel_by_function(const mc_output_config_t *config, mc_output_function_t fn)
+int mc_output_find_brake_channel(const mc_output_config_t *config)
 {
     for (int i = 0; i < MC_OUTPUT_COUNT; i++) {
-        if (config->channels[i].function == fn) {
+        if (config->channels[i].is_brake) {
+            return i;
+        }
+    }
+    return -1;
+}
+
+int mc_output_find_indicator_channel(const mc_output_config_t *config, mc_indicator_side_t side)
+{
+    if (side == MC_INDICATOR_NONE) {
+        return -1;
+    }
+    for (int i = 0; i < MC_OUTPUT_COUNT; i++) {
+        if (config->channels[i].indicator == side) {
             return i;
         }
     }
@@ -280,7 +363,12 @@ int mc_output_find_channel_by_function(const mc_output_config_t *config, mc_outp
 
 int mc_output_find_ignition_channel(const mc_output_config_t *config)
 {
-    return mc_output_find_channel_by_function(config, MC_OUT_FUNC_IGNITION);
+    for (int i = 0; i < MC_OUTPUT_COUNT; i++) {
+        if (config->channels[i].is_ignition) {
+            return i;
+        }
+    }
+    return -1;
 }
 
 uint32_t mc_output_config_validate(const mc_output_config_t *config)
@@ -290,10 +378,10 @@ uint32_t mc_output_config_validate(const mc_output_config_t *config)
     int starter_count = 0;
 
     for (int i = 0; i < MC_OUTPUT_COUNT; i++) {
-        if (config->channels[i].function == MC_OUT_FUNC_IGNITION) {
+        if (config->channels[i].is_ignition) {
             ignition_count++;
         }
-        if (config->channels[i].function == MC_OUT_FUNC_STARTER) {
+        if (config->channels[i].is_starter) {
             starter_count++;
         }
     }
@@ -306,8 +394,11 @@ uint32_t mc_output_config_validate(const mc_output_config_t *config)
     }
 
     for (int i = 0; i < MC_OUTPUT_COUNT; i++) {
-        if (config->channels[i].mode == MC_OUT_MODE_PWM &&
-            (config->channels[i].pwm_duty_pct < 1 || config->channels[i].pwm_duty_pct > 100)) {
+        /* Duty is now always meaningful (100 = undimmed), not just in a
+         * dedicated PWM mode, so the valid range is checked unconditionally.
+         * 0 would mean "on but fully dark", which is never what anyone
+         * wants — use commanded_on for off. */
+        if (config->channels[i].pwm_duty_pct < 1 || config->channels[i].pwm_duty_pct > 100) {
             flags |= MC_OUT_CFG_BAD_PWM_DUTY;
         }
     }

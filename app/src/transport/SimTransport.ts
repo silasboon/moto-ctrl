@@ -4,7 +4,10 @@
  * the host simulator with no hardware attached. See docs/PROTOCOL.md §1:
  * each WebSocket message is [channel byte][opcode][payload].
  */
-import type { RNWebSocket, RNWebSocketMessageEvent } from '../platform/webSocketGlobal';
+import type {
+  RNWebSocket,
+  RNWebSocketMessageEvent,
+} from '../platform/webSocketGlobal';
 import { WebSocketImpl } from '../platform/webSocketGlobal';
 import type { ConnectionState, DeviceDescriptor, Transport } from './Transport';
 
@@ -12,7 +15,9 @@ export class SimTransport implements Transport {
   private ws: RNWebSocket | null = null;
   private state: ConnectionState = 'disconnected';
   private readonly stateListeners = new Set<(state: ConnectionState) => void>();
-  private readonly messageListeners = new Set<(channel: number, data: Uint8Array) => void>();
+  private readonly messageListeners = new Set<
+    (channel: number, data: Uint8Array) => void
+  >();
 
   constructor(private readonly url: string) {}
 
@@ -66,7 +71,11 @@ export class SimTransport implements Transport {
         this.setState('disconnected');
         if (!settled) {
           settled = true;
-          reject(new Error(`SimTransport: connection closed before opening (${url})`));
+          reject(
+            new Error(
+              `SimTransport: connection closed before opening (${url})`,
+            ),
+          );
         }
       };
     });
@@ -83,7 +92,9 @@ export class SimTransport implements Transport {
     return this.state;
   }
 
-  onConnectionStateChange(listener: (state: ConnectionState) => void): () => void {
+  onConnectionStateChange(
+    listener: (state: ConnectionState) => void,
+  ): () => void {
     this.stateListeners.add(listener);
     return () => this.stateListeners.delete(listener);
   }

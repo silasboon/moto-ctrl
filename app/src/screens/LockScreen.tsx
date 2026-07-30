@@ -15,11 +15,20 @@
  * there is nothing to "read back" and display.
  */
 import React, { useEffect, useState } from 'react';
-import { ScrollView, StyleSheet, Switch, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import {
+  ScrollView,
+  StyleSheet,
+  Switch,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  View,
+} from 'react-native';
 
 import { LOCK_METHOD } from '../protocol/constants';
 import type { MotoClient } from '../protocol/MotoClient';
 import { defaultLockConfig, type LockConfig } from '../protocol/types';
+import { colors } from '../ui/theme';
 
 interface Props {
   client: MotoClient;
@@ -27,10 +36,23 @@ interface Props {
   onOwnershipTransferred: () => void;
 }
 
-function Chip({ label, active, onPress }: { label: string; active: boolean; onPress: () => void }): React.JSX.Element {
+function Chip({
+  label,
+  active,
+  onPress,
+}: {
+  label: string;
+  active: boolean;
+  onPress: () => void;
+}): React.JSX.Element {
   return (
-    <TouchableOpacity style={[styles.chip, active && styles.chipActive]} onPress={onPress}>
-      <Text style={active ? styles.chipTextActive : styles.chipText}>{label}</Text>
+    <TouchableOpacity
+      style={[styles.chip, active && styles.chipActive]}
+      onPress={onPress}
+    >
+      <Text style={active ? styles.chipTextActive : styles.chipText}>
+        {label}
+      </Text>
     </TouchableOpacity>
   );
 }
@@ -41,11 +63,15 @@ function Chip({ label, active, onPress }: { label: string; active: boolean; onPr
 function parseCode(text: string): number[] {
   return text
     .split(',')
-    .map((s) => parseInt(s.trim(), 10))
-    .filter((n) => Number.isInteger(n) && n >= 0 && n <= 7);
+    .map(s => parseInt(s.trim(), 10))
+    .filter(n => Number.isInteger(n) && n >= 0 && n <= 7);
 }
 
-export function LockScreen({ client, onDone, onOwnershipTransferred }: Props): React.JSX.Element {
+export function LockScreen({
+  client,
+  onDone,
+  onOwnershipTransferred,
+}: Props): React.JSX.Element {
   const [config, setConfig] = useState<LockConfig>(defaultLockConfig());
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -66,7 +92,9 @@ export function LockScreen({ client, onDone, onOwnershipTransferred }: Props): R
     client
       .lockGetConfig()
       .then(setConfig)
-      .catch((err: unknown) => setError(err instanceof Error ? err.message : String(err)))
+      .catch((err: unknown) =>
+        setError(err instanceof Error ? err.message : String(err)),
+      )
       .finally(() => setLoading(false));
   }, [client]);
 
@@ -108,7 +136,9 @@ export function LockScreen({ client, onDone, onOwnershipTransferred }: Props): R
     setCodeResult(null);
     try {
       const result = await client.cheatcodeSet(buttons);
-      setCodeResult(result.ok ? 'Cheat-code set.' : `Rejected: ${result.resultName}`);
+      setCodeResult(
+        result.ok ? 'Cheat-code set.' : `Rejected: ${result.resultName}`,
+      );
       if (result.ok) {
         setCodeText('');
         await refreshConfig();
@@ -148,7 +178,13 @@ export function LockScreen({ client, onDone, onOwnershipTransferred }: Props): R
     }
     try {
       const result = await client.cheatcodeTest(buttons);
-      setTestResult(!result.ok ? 'Device rejected the request.' : result.match ? 'MATCH' : 'No match.');
+      setTestResult(
+        !result.ok
+          ? 'Device rejected the request.'
+          : result.match
+            ? 'MATCH'
+            : 'No match.',
+      );
     } catch (err) {
       setTestResult(err instanceof Error ? err.message : String(err));
     }
@@ -180,10 +216,14 @@ export function LockScreen({ client, onDone, onOwnershipTransferred }: Props): R
   }
 
   const methodPhone = (config.methodsMask & LOCK_METHOD.PHONE) !== 0;
-  const methodIgnSwitch = (config.methodsMask & LOCK_METHOD.IGNITION_SWITCH) !== 0;
+  const methodIgnSwitch =
+    (config.methodsMask & LOCK_METHOD.IGNITION_SWITCH) !== 0;
 
   function toggleMethod(bit: number, on: boolean): void {
-    setConfig((prev) => ({ ...prev, methodsMask: on ? prev.methodsMask | bit : prev.methodsMask & ~bit }));
+    setConfig(prev => ({
+      ...prev,
+      methodsMask: on ? prev.methodsMask | bit : prev.methodsMask & ~bit,
+    }));
   }
 
   return (
@@ -199,27 +239,37 @@ export function LockScreen({ client, onDone, onOwnershipTransferred }: Props): R
         <Text style={styles.rowLabel}>Immobilizer enabled</Text>
         <Switch
           value={config.immobilizerEnabled}
-          onValueChange={(v) => setConfig((prev) => ({ ...prev, immobilizerEnabled: v }))}
+          onValueChange={v =>
+            setConfig(prev => ({ ...prev, immobilizerEnabled: v }))
+          }
         />
       </View>
       {config.immobilizerEnabled && !config.cheatcodeSet && (
         <Text style={styles.warn}>
-          A cheat-code must be set (below) before this can be enabled — it&apos;s the mandatory fallback and can
-          never be turned off while the immobilizer is on.
+          A cheat-code must be set (below) before this can be enabled —
+          it&apos;s the mandatory fallback and can never be turned off while the
+          immobilizer is on.
         </Text>
       )}
 
       <Text style={styles.sectionTitle}>Unlock methods</Text>
       <View style={styles.row}>
         <Text style={styles.rowLabel}>Phone-as-key</Text>
-        <Switch value={methodPhone} onValueChange={(v) => toggleMethod(LOCK_METHOD.PHONE, v)} />
+        <Switch
+          value={methodPhone}
+          onValueChange={v => toggleMethod(LOCK_METHOD.PHONE, v)}
+        />
       </View>
       <View style={styles.row}>
         <Text style={styles.rowLabel}>Ignition switch</Text>
-        <Switch value={methodIgnSwitch} onValueChange={(v) => toggleMethod(LOCK_METHOD.IGNITION_SWITCH, v)} />
+        <Switch
+          value={methodIgnSwitch}
+          onValueChange={v => toggleMethod(LOCK_METHOD.IGNITION_SWITCH, v)}
+        />
       </View>
       <Text style={styles.hint}>
-        The button cheat-code is always active whenever the immobilizer is enabled — it&apos;s not a toggle.
+        The button cheat-code is always active whenever the immobilizer is
+        enabled — it&apos;s not a toggle.
       </Text>
       {methodIgnSwitch && (
         <>
@@ -228,14 +278,18 @@ export function LockScreen({ client, onDone, onOwnershipTransferred }: Props): R
             <Chip
               label="none"
               active={config.ignitionSwitchInput === -1}
-              onPress={() => setConfig((prev) => ({ ...prev, ignitionSwitchInput: -1 }))}
+              onPress={() =>
+                setConfig(prev => ({ ...prev, ignitionSwitchInput: -1 }))
+              }
             />
             {Array.from({ length: 8 }).map((_, i) => (
               <Chip
                 key={i}
                 label={`input ${i}`}
                 active={config.ignitionSwitchInput === i}
-                onPress={() => setConfig((prev) => ({ ...prev, ignitionSwitchInput: i }))}
+                onPress={() =>
+                  setConfig(prev => ({ ...prev, ignitionSwitchInput: i }))
+                }
               />
             ))}
           </View>
@@ -246,25 +300,41 @@ export function LockScreen({ client, onDone, onOwnershipTransferred }: Props): R
       <View style={styles.row}>
         <Text style={styles.rowLabel}>Auto-lock grace (ms)</Text>
         <TextInput
+          placeholderTextColor={colors.textFaint}
           style={styles.numInput}
           keyboardType="number-pad"
           value={String(config.autoLockGraceMs)}
-          onChangeText={(v) => setConfig((prev) => ({ ...prev, autoLockGraceMs: parseInt(v, 10) || 0 }))}
+          onChangeText={v =>
+            setConfig(prev => ({
+              ...prev,
+              autoLockGraceMs: parseInt(v, 10) || 0,
+            }))
+          }
         />
       </View>
       <View style={styles.row}>
         <Text style={styles.rowLabel}>Cheat-code entry window (ms)</Text>
         <TextInput
+          placeholderTextColor={colors.textFaint}
           style={styles.numInput}
           keyboardType="number-pad"
           value={String(config.cheatcodeWindowMs)}
-          onChangeText={(v) => setConfig((prev) => ({ ...prev, cheatcodeWindowMs: parseInt(v, 10) || 0 }))}
+          onChangeText={v =>
+            setConfig(prev => ({
+              ...prev,
+              cheatcodeWindowMs: parseInt(v, 10) || 0,
+            }))
+          }
         />
       </View>
 
       {error && <Text style={styles.error}>{error}</Text>}
       {saveResult && <Text style={styles.success}>{saveResult}</Text>}
-      <TouchableOpacity style={[styles.saveButton, saving && styles.disabled]} onPress={saveConfig} disabled={saving}>
+      <TouchableOpacity
+        style={[styles.saveButton, saving && styles.disabled]}
+        onPress={saveConfig}
+        disabled={saving}
+      >
         <Text style={styles.saveButtonText}>{saving ? 'Saving…' : 'Save'}</Text>
       </TouchableOpacity>
 
@@ -276,17 +346,26 @@ export function LockScreen({ client, onDone, onOwnershipTransferred }: Props): R
           : 'Not set.'}
       </Text>
       <TextInput
+        placeholderTextColor={colors.textFaint}
         style={styles.nameInput}
         value={codeText}
         onChangeText={setCodeText}
         placeholder="new code, e.g. 0,1,2,3 (4-10 button indices, 0-7)"
       />
       <View style={styles.actionRow}>
-        <TouchableOpacity style={[styles.smallButton, codeBusy && styles.disabled]} onPress={setCheatcode} disabled={codeBusy}>
+        <TouchableOpacity
+          style={[styles.smallButton, codeBusy && styles.disabled]}
+          onPress={setCheatcode}
+          disabled={codeBusy}
+        >
           <Text style={styles.smallButtonText}>Set</Text>
         </TouchableOpacity>
         <TouchableOpacity
-          style={[styles.smallButton, styles.dangerButton, codeBusy && styles.disabled]}
+          style={[
+            styles.smallButton,
+            styles.dangerButton,
+            codeBusy && styles.disabled,
+          ]}
           onPress={clearCheatcode}
           disabled={codeBusy}
         >
@@ -295,8 +374,16 @@ export function LockScreen({ client, onDone, onOwnershipTransferred }: Props): R
       </View>
       {codeResult && <Text style={styles.hint}>{codeResult}</Text>}
 
-      <Text style={styles.sectionTitle}>Test a candidate (practice — no side effects)</Text>
-      <TextInput style={styles.nameInput} value={testText} onChangeText={setTestText} placeholder="e.g. 0,1,2,3" />
+      <Text style={styles.sectionTitle}>
+        Test a candidate (practice — no side effects)
+      </Text>
+      <TextInput
+        placeholderTextColor={colors.textFaint}
+        style={styles.nameInput}
+        value={testText}
+        onChangeText={setTestText}
+        placeholder="e.g. 0,1,2,3"
+      />
       <TouchableOpacity style={styles.smallButton} onPress={testCheatcode}>
         <Text style={styles.smallButtonText}>Test</Text>
       </TouchableOpacity>
@@ -304,28 +391,42 @@ export function LockScreen({ client, onDone, onOwnershipTransferred }: Props): R
 
       <Text style={styles.sectionTitle}>Ownership transfer</Text>
       <Text style={styles.hint}>
-        Wipes every enrolled phone key and the cheat-code, back to a factory-fresh, re-enrollable state. Use this
-        before selling or handing off the bike.
+        Wipes every enrolled phone key and the cheat-code, back to a
+        factory-fresh, re-enrollable state. Use this before selling or handing
+        off the bike.
       </Text>
       {!confirmTransfer ? (
-        <TouchableOpacity style={[styles.smallButton, styles.dangerButton]} onPress={() => setConfirmTransfer(true)}>
+        <TouchableOpacity
+          style={[styles.smallButton, styles.dangerButton]}
+          onPress={() => setConfirmTransfer(true)}
+        >
           <Text style={styles.smallButtonText}>Transfer ownership…</Text>
         </TouchableOpacity>
       ) : (
         <View style={styles.confirmBlock}>
           <Text style={styles.warn}>
-            This immediately revokes every paired phone (including this one) and disables the immobilizer. This
-            cannot be undone from the app.
+            This immediately revokes every paired phone (including this one) and
+            disables the immobilizer. This cannot be undone from the app.
           </Text>
           <View style={styles.actionRow}>
             <TouchableOpacity
-              style={[styles.smallButton, styles.dangerButton, transferring && styles.disabled]}
+              style={[
+                styles.smallButton,
+                styles.dangerButton,
+                transferring && styles.disabled,
+              ]}
               onPress={doTransferOwnership}
               disabled={transferring}
             >
-              <Text style={styles.smallButtonText}>{transferring ? 'Transferring…' : 'Confirm transfer'}</Text>
+              <Text style={styles.smallButtonText}>
+                {transferring ? 'Transferring…' : 'Confirm transfer'}
+              </Text>
             </TouchableOpacity>
-            <TouchableOpacity style={styles.smallButton} onPress={() => setConfirmTransfer(false)} disabled={transferring}>
+            <TouchableOpacity
+              style={styles.smallButton}
+              onPress={() => setConfirmTransfer(false)}
+              disabled={transferring}
+            >
               <Text style={styles.smallButtonText}>Cancel</Text>
             </TouchableOpacity>
           </View>
@@ -336,40 +437,90 @@ export function LockScreen({ client, onDone, onOwnershipTransferred }: Props): R
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1 },
+  container: { flex: 1, backgroundColor: colors.bg },
   content: { padding: 16, gap: 10 },
   center: { flex: 1, alignItems: 'center', justifyContent: 'center' },
-  header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-  title: { fontSize: 20, fontWeight: '700' },
-  link: { color: '#2563eb' },
-  row: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 4 },
-  rowLabel: { fontSize: 14 },
-  sectionTitle: { fontSize: 13, color: '#666', textTransform: 'uppercase', marginTop: 10 },
-  hint: { fontSize: 12, color: '#888' },
-  warn: { fontSize: 12, color: '#b45309' },
+  header: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  title: { color: colors.text, fontSize: 20, fontWeight: '700' },
+  link: { color: colors.accent },
+  row: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingVertical: 4,
+  },
+  rowLabel: { color: colors.text, fontSize: 14 },
+  sectionTitle: {
+    fontSize: 13,
+    color: colors.textMuted,
+    textTransform: 'uppercase',
+    marginTop: 10,
+  },
+  hint: { fontSize: 12, color: colors.textFaint },
+  warn: { fontSize: 12, color: colors.warn },
   chipRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 6 },
-  chip: { paddingVertical: 6, paddingHorizontal: 10, borderRadius: 999, borderWidth: 1, borderColor: '#ccc' },
-  chipActive: { backgroundColor: '#2563eb', borderColor: '#2563eb' },
-  chipText: { fontSize: 12, color: '#333' },
-  chipTextActive: { fontSize: 12, color: 'white', fontWeight: '600' },
-  nameInput: { borderWidth: 1, borderColor: '#ccc', borderRadius: 6, padding: 8 },
-  numInput: { borderWidth: 1, borderColor: '#ccc', borderRadius: 6, padding: 8, width: 90, textAlign: 'right' },
-  error: { color: '#b91c1c' },
-  success: { color: '#15803d' },
-  saveButton: { backgroundColor: '#2563eb', padding: 12, borderRadius: 8, alignItems: 'center', marginTop: 4 },
+  chip: {
+    paddingVertical: 6,
+    paddingHorizontal: 10,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: colors.borderStrong,
+  },
+  chipActive: { backgroundColor: colors.accent, borderColor: colors.accent },
+  chipText: { fontSize: 12, color: colors.text },
+  chipTextActive: {
+    fontSize: 12,
+    color: colors.textOnAccent,
+    fontWeight: '600',
+  },
+  nameInput: {
+    borderWidth: 1,
+    borderColor: colors.borderStrong,
+    borderRadius: 6,
+    padding: 8,
+    color: colors.text,
+  },
+  numInput: {
+    borderWidth: 1,
+    borderColor: colors.borderStrong,
+    borderRadius: 6,
+    padding: 8,
+    width: 90,
+    textAlign: 'right',
+    color: colors.text,
+  },
+  error: { color: colors.danger },
+  success: { color: colors.on },
+  saveButton: {
+    backgroundColor: colors.accent,
+    padding: 12,
+    borderRadius: 8,
+    alignItems: 'center',
+    marginTop: 4,
+  },
   disabled: { opacity: 0.5 },
-  saveButtonText: { color: 'white', fontWeight: '600' },
+  saveButtonText: { color: colors.textOnAccent, fontWeight: '600' },
   actionRow: { flexDirection: 'row', gap: 8 },
   smallButton: {
     paddingVertical: 8,
     paddingHorizontal: 12,
     borderRadius: 8,
     borderWidth: 1,
-    borderColor: '#2563eb',
+    borderColor: colors.accent,
     alignItems: 'center',
   },
-  dangerButton: { borderColor: '#b91c1c' },
-  smallButtonText: { color: '#2563eb', fontWeight: '600' },
-  dangerButtonText: { color: '#b91c1c', fontWeight: '600' },
-  confirmBlock: { borderWidth: 1, borderColor: '#b91c1c', borderRadius: 8, padding: 10, gap: 8 },
+  dangerButton: { borderColor: colors.danger },
+  smallButtonText: { color: colors.accent, fontWeight: '600' },
+  dangerButtonText: { color: colors.danger, fontWeight: '600' },
+  confirmBlock: {
+    borderWidth: 1,
+    borderColor: colors.danger,
+    borderRadius: 8,
+    padding: 10,
+    gap: 8,
+  },
 });

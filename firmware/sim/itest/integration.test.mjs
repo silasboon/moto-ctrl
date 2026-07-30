@@ -146,7 +146,7 @@ async function setUpLockedBikeConfig(client, extraMethods = 0) {
   const kp = await enrolledAndAuthed(client);
 
   const cfg = JSON.parse(await client.configRead());
-  cfg.outputs.channels[5].function = 'ignition';
+  cfg.outputs.channels[5].is_ignition = true;
   await client.configWrite(JSON.stringify(cfg));
 
   const set = await client.cheatcodeSet([1, 2, 3, 4]);
@@ -275,17 +275,19 @@ test('config read/write round-trip over chunked JSON', async () => {
 
     const json = await client.configRead();
     const cfg = JSON.parse(json);
-    assert.equal(cfg.schema_version, 3);
+    assert.equal(cfg.schema_version, 6);
     assert.equal(cfg.outputs.channels.length, 12);
 
-    cfg.outputs.channels[4].function = 'horn';
+    /* v6: a channel is just a name plus a behaviour — no taxonomy to pick
+     * from, which is the whole point of the schema change. */
     cfg.outputs.channels[4].name = 'Horn';
+    cfg.outputs.channels[4].behaviour = 'momentary';
     const w = await client.configWrite(JSON.stringify(cfg));
     assert.equal(w.result, RESULT.OK);
 
     const cfg2 = JSON.parse(await client.configRead());
-    assert.equal(cfg2.outputs.channels[4].function, 'horn');
     assert.equal(cfg2.outputs.channels[4].name, 'Horn');
+    assert.equal(cfg2.outputs.channels[4].behaviour, 'momentary');
   } finally {
     stop();
   }
@@ -316,7 +318,7 @@ test('starter output cannot be switched on over the wire', async () => {
     await enrolledAndAuthed(client);
 
     const cfg = JSON.parse(await client.configRead());
-    cfg.outputs.channels[6].function = 'starter';
+    cfg.outputs.channels[6].is_starter = true;
     await client.configWrite(JSON.stringify(cfg));
 
     const res = await client.setOutput(6, true);
@@ -660,7 +662,7 @@ test('diagnostics: low battery cuts off non-essential outputs, never ignition, a
     await enrolledAndAuthed(client);
 
     const cfg = JSON.parse(await client.configRead());
-    cfg.outputs.channels[5].function = 'ignition';
+    cfg.outputs.channels[5].is_ignition = true;
     cfg.outputs.channels[8].function = 'horn';
     await client.configWrite(JSON.stringify(cfg));
     await client.setOutput(5, true);
@@ -711,8 +713,10 @@ test('turn signals: mutual exclusion over the wire', async () => {
   try {
     await enrolledAndAuthed(client);
     const cfg = JSON.parse(await client.configRead());
-    cfg.outputs.channels[0].function = 'turn_l';
-    cfg.outputs.channels[1].function = 'turn_r';
+    cfg.outputs.channels[0].indicator = 'left';
+    cfg.outputs.channels[0].hazard_member = true;
+    cfg.outputs.channels[1].indicator = 'right';
+    cfg.outputs.channels[1].hazard_member = true;
     await client.configWrite(JSON.stringify(cfg));
 
     assert.equal((await client.setOutput(0, true)).result, RESULT.OK);
@@ -735,7 +739,8 @@ test('turn signals: auto-cancel timer expires the signal without any client acti
   try {
     await enrolledAndAuthed(client);
     const cfg = JSON.parse(await client.configRead());
-    cfg.outputs.channels[0].function = 'turn_l';
+    cfg.outputs.channels[0].indicator = 'left';
+    cfg.outputs.channels[0].hazard_member = true;
     cfg.outputs.turn_auto_cancel_ms = 300; // short, for a fast test
     await client.configWrite(JSON.stringify(cfg));
 
@@ -764,8 +769,10 @@ test('hazard press: toggles both turn channels together, rejected without any co
     assert.equal((await client.hazardPress()).result, RESULT.REJECTED);
 
     const cfg = JSON.parse(await client.configRead());
-    cfg.outputs.channels[0].function = 'turn_l';
-    cfg.outputs.channels[1].function = 'turn_r';
+    cfg.outputs.channels[0].indicator = 'left';
+    cfg.outputs.channels[0].hazard_member = true;
+    cfg.outputs.channels[1].indicator = 'right';
+    cfg.outputs.channels[1].hazard_member = true;
     cfg.outputs.turn_auto_cancel_ms = 60000; // long enough to not interfere
     await client.configWrite(JSON.stringify(cfg));
 
@@ -783,19 +790,20 @@ test('hazard press: toggles both turn channels together, rejected without any co
   }
 });
 
-test('flasher config (mode, pwm duty, brake pulse timing, brake switch input) round-trips through JSON', async () => {
+test('flasher config (behaviour, pwm duty, brake pulse timing, brake switch input) round-trips through JSON', async () => {
   const { client, stop } = await startSession();
   try {
     await enrolledAndAuthed(client);
     const cfg = JSON.parse(await client.configRead());
 
-    cfg.outputs.channels[2].function = 'turn_l';
-    cfg.outputs.channels[2].mode = 'flash_turn';
-    cfg.outputs.channels[3].function = 'aux';
-    cfg.outputs.channels[3].mode = 'pwm';
+    cfg.outputs.channels[2].indicator = 'left';
+    cfg.outputs.channels[2].hazard_member = true;
+    cfg.outputs.channels[2].behaviour = 'blink';
+    /* pwm is a modifier now, not a mode: a dimmed channel is still a toggle. */
+    cfg.outputs.channels[3].behaviour = 'toggle';
     cfg.outputs.channels[3].pwm_duty_pct = 55;
-    cfg.outputs.channels[4].function = 'brake';
-    cfg.outputs.channels[4].mode = 'flash_brake';
+    cfg.outputs.channels[4].is_brake = true;
+    cfg.outputs.channels[4].behaviour = 'flasher';
     cfg.outputs.brake_switch_input = 6;
     cfg.outputs.turn_flash_period_ms = 650;
     cfg.outputs.brake_flash_pulse_count = 4;
@@ -804,18 +812,19 @@ test('flasher config (mode, pwm duty, brake pulse timing, brake switch input) ro
     await client.configWrite(JSON.stringify(cfg));
 
     const back = JSON.parse(await client.configRead());
-    assert.equal(back.outputs.channels[2].mode, 'flash_turn');
-    assert.equal(back.outputs.channels[3].mode, 'pwm');
+    assert.equal(back.outputs.channels[2].behaviour, 'blink');
+    assert.equal(back.outputs.channels[3].behaviour, 'toggle');
     assert.equal(back.outputs.channels[3].pwm_duty_pct, 55);
-    assert.equal(back.outputs.channels[4].mode, 'flash_brake');
+    assert.equal(back.outputs.channels[4].behaviour, 'flasher');
+    assert.equal(back.outputs.channels[4].is_brake, true);
     assert.equal(back.outputs.brake_switch_input, 6);
     assert.equal(back.outputs.turn_flash_period_ms, 650);
     assert.equal(back.outputs.brake_flash_pulse_count, 4);
     assert.equal(back.outputs.brake_flash_pulse_on_ms, 120);
     assert.equal(back.outputs.brake_flash_pulse_off_ms, 40);
 
-    // SET_OUTPUT still works normally for a flash-mode channel -- commanded
-    // intent is unaffected by which mode renders it.
+    // SET_OUTPUT still works normally for a patterned channel -- commanded
+    // intent is unaffected by which behaviour renders it.
     assert.equal((await client.setOutput(4, true)).result, RESULT.OK);
     const st = await client.getStatus();
     assert.equal(st.outputStateMask & (1 << 4), 1 << 4);

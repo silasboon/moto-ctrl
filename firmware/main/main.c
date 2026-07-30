@@ -23,6 +23,7 @@
 #include "mc_status.h"
 
 #include "ble/ble_app.h"
+#include "ble/gatt_svr.h"
 #include "diag_hal.h"
 #include "factory_reset.h"
 #include "input_hal_gpio.h"
@@ -135,6 +136,152 @@ static void fill_status_cb(mc_status_t *st, void *ctx)
      * — not this platform callback's job. */
 }
 
+/* Does `list` bind to output channel `ch`, either directly (the reserved
+ * 256+N range) or via a function id that currently resolves to it? */
+static bool binding_targets_channel(const mc_action_list_t *list, uint8_t ch)
+{
+    for (uint8_t i = 0; i < list->count && i < MC_ACTION_LIST_MAX; i++) {
+        mc_action_id_t a = list->actions[i];
+        if (a >= MC_ACTION_OUTPUT_TOGGLE_BASE &&
+            a - MC_ACTION_OUTPUT_TOGGLE_BASE == ch) {
+            return true;
+        }
+        if (a == MC_ACTION_TURN_L_TOGGLE || a == MC_ACTION_TURN_R_TOGGLE) {
+            mc_indicator_side_t side =
+                (a == MC_ACTION_TURN_L_TOGGLE) ? MC_INDICATOR_LEFT : MC_INDICATOR_RIGHT;
+            if (mc_output_find_indicator_channel(&s_config.outputs, side) == (int)ch) {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+/* True if channel `ch` is configured momentary — i.e. driven by button LEVEL
+ * in momentary_tick() below, so the press-event path must leave it alone or a
+ * single press would both hold it (level) and toggle it (event). */
+static bool channel_is_momentary(uint8_t ch)
+{
+    return ch < MC_OUTPUT_COUNT &&
+           s_config.outputs.channels[ch].behaviour == MC_OUT_BEHAVIOUR_MOMENTARY;
+}
+
+/* Drives every momentary channel from the level of whichever button's
+ * short-press binding targets it: on while held, off on release. Same
+ * pass-through pattern as brake_switch_input (mc_output.h), just generalised
+ * to any channel. Several buttons may target one channel — any of them held
+ * holds the output.
+ *
+ * Called every tick BEFORE the press-event queue is drained, so a release is
+ * honoured promptly rather than a tick late. */
+static void momentary_tick(uint32_t t)
+{
+    for (uint8_t ch = 0; ch < MC_OUTPUT_COUNT; ch++) {
+        if (s_config.outputs.channels[ch].behaviour != MC_OUT_BEHAVIOUR_MOMENTARY) {
+            continue;
+        }
+        /* A momentary output follows a HOLD, never a tap: a single/double
+         * tap binds to toggle/blink instead, so waiting for the hold
+         * threshold keeps a tap from blipping the output. */
+        bool held = false;
+        for (uint8_t b = 0; b < MC_INPUT_COUNT && !held; b++) {
+            if (binding_targets_channel(&s_config.inputs.long_press_actions[b], ch) &&
+                mc_input_hold_active(&s_input, b)) {
+                held = true;
+            }
+        }
+        /* ...or a chord that is still being held down. */
+        for (uint8_t i = 0; i < s_config.inputs.combo_count && !held; i++) {
+            if (s_config.inputs.combos[i].type == MC_COMBO_CHORD &&
+                binding_targets_channel(&s_config.inputs.combos[i].actions, ch) &&
+                mc_input_chord_held(&s_input, i)) {
+                held = true;
+            }
+        }
+        if (held != mc_output_get_state(&s_output, ch)) {
+            /* MC_OUT_SRC_LOCAL: this is the hardware-button path, so a
+             * momentary starter binding is permitted here where the app's
+             * remote SET_OUTPUT stays blocked (AGENTS.md #6). The interlock
+             * and engine-running guards still apply inside mc_output_set(),
+             * and a rejected "on" simply leaves the channel off. */
+            mc_output_set(&s_output, ch, held, MC_OUT_SRC_LOCAL);
+        }
+    }
+    (void)t;
+}
+
+/* Executes one action binding. Shared by short/long/double press and by the
+ * generic combos[] matcher so every binding path enforces identical policy:
+ * every output change goes through mc_output_set() with MC_OUT_SRC_LOCAL,
+ * which is where the immobilizer, the starter remote/engine-running/interlock
+ * guards (AGENTS.md #6) and turn mutual exclusion actually live. Returns
+ * true if `action` was recognised. */
+static bool dispatch_action(mc_action_id_t action, uint32_t t)
+{
+    if (action == MC_ACTION_NONE) {
+        return false;
+    }
+
+    /* Direct channel binding (mc_types.h): toggle output N. */
+    if (action >= MC_ACTION_OUTPUT_TOGGLE_BASE &&
+        action < MC_ACTION_OUTPUT_TOGGLE_BASE + MC_OUTPUT_COUNT) {
+        uint8_t ch = (uint8_t)(action - MC_ACTION_OUTPUT_TOGGLE_BASE);
+        /* momentary_tick() owns this channel — toggling it here too would
+         * fight the level and leave it inverted. */
+        if (channel_is_momentary(ch)) {
+            return true;
+        }
+        mc_output_set(&s_output, ch, !mc_output_get_state(&s_output, ch), MC_OUT_SRC_LOCAL);
+        return true;
+    }
+
+    switch (action) {
+    case MC_ACTION_TURN_L_TOGGLE:
+    case MC_ACTION_TURN_R_TOGGLE: {
+        mc_indicator_side_t side =
+            (action == MC_ACTION_TURN_L_TOGGLE) ? MC_INDICATOR_LEFT : MC_INDICATOR_RIGHT;
+        int ch = mc_output_find_indicator_channel(&s_config.outputs, side);
+        if (ch >= 0 && !channel_is_momentary((uint8_t)ch)) {
+            mc_output_set(&s_output, (uint8_t)ch, !mc_output_get_state(&s_output, (uint8_t)ch),
+                          MC_OUT_SRC_LOCAL);
+        }
+        return true;
+    }
+    case MC_ACTION_HAZARD_TOGGLE:
+        mc_output_hazard_press(&s_output, t);
+        return true;
+    default:
+        return false;
+    }
+}
+
+/* Runs every action in a binding, in list order. One trigger may drive
+ * several outputs (mc_types.h's mc_action_list_t). */
+static void dispatch_action_list(const mc_action_list_t *list, uint32_t t)
+{
+    for (uint8_t i = 0; i < list->count && i < MC_ACTION_LIST_MAX; i++) {
+        dispatch_action(list->actions[i], t);
+    }
+}
+
+/* Picks the binding for a press type. All three arrays are persisted and
+ * round-tripped through the CONFIG channel (docs/PROTOCOL.md); before this
+ * existed only short_press_action was ever read, so long/double bindings
+ * were silently accepted and ignored. */
+static const mc_action_list_t *actions_for_press(uint8_t button, mc_press_event_type_t type)
+{
+    static const mc_action_list_t none = { .count = 0 };
+    if (button >= MC_INPUT_COUNT) {
+        return &none;
+    }
+    switch (type) {
+    case MC_PRESS_SHORT:  return &s_config.inputs.short_press_actions[button];
+    case MC_PRESS_LONG:   return &s_config.inputs.long_press_actions[button];
+    case MC_PRESS_DOUBLE: return &s_config.inputs.double_press_actions[button];
+    default:              return &none;
+    }
+}
+
 static void app_task(void *arg)
 {
     (void)arg;
@@ -160,7 +307,7 @@ static void app_task(void *arg)
          * the BRAKE channel's mode, not of how the transition arrived. */
         int8_t brake_in = s_config.outputs.brake_switch_input;
         if (brake_in >= 0) {
-            int brake_ch = mc_output_find_channel_by_function(&s_config.outputs, MC_OUT_FUNC_BRAKE);
+            int brake_ch = mc_output_find_brake_channel(&s_config.outputs);
             if (brake_ch >= 0) {
                 bool asserted = mc_input_button_level(&s_input, (uint8_t)brake_in);
                 if (asserted != mc_output_get_state(&s_output, (uint8_t)brake_ch)) {
@@ -168,6 +315,10 @@ static void app_task(void *arg)
                 }
             }
         }
+
+        /* Momentary channels (horn, starter, hold-to-run aux) follow button
+         * level, not press events — run before the event queue is drained. */
+        momentary_tick(t);
 
         bool was_lv_cutoff = mc_output_lv_cutoff_active(&s_output);
         mc_diag_tick(&s_diag, &s_output, t);
@@ -201,6 +352,11 @@ static void app_task(void *arg)
         while (mc_input_pop_event(&s_input, &evt)) {
             if (evt.kind == MC_INPUT_EVT_PRESS) {
                 ESP_LOGI(TAG, "button %u press type %d", evt.data.press.button, evt.data.press.type);
+                /* Button-identification learn mode (mc_protocol.h). A no-op
+                 * unless an authenticated app asked for it, so this costs
+                 * nothing while riding. */
+                gatt_svr_push_input_event(evt.data.press.button, (uint8_t)evt.data.press.type,
+                                          evt.data.press.action_suppressed);
                 /* Only short presses feed the cheat-code — see mc_lock.h
                  * (matches mc_input's own sequence-combo matcher, which
                  * also only consumes short presses). A no-op unless the
@@ -218,32 +374,32 @@ static void app_task(void *arg)
                         uint8_t arg0 = (wrong > 0xFF) ? 0xFF : (uint8_t)wrong;
                         log_event_cb(NULL, MC_EVT_CHEATCODE_LOCKOUT, arg0, 0);
                     }
+                }
 
-                    /* Turn/hazard handlebar bindings. Orthogonal to
-                     * the cheat-code above — mc_lock_cheatcode_press() only
-                     * ever acts while LOCKED, so a button configured for
-                     * both a turn action and (incidentally) part of the
-                     * cheat-code buffer safely does both. */
-                    mc_action_id_t action = s_config.inputs.short_press_action[evt.data.press.button];
-                    if (action == MC_ACTION_TURN_L_TOGGLE || action == MC_ACTION_TURN_R_TOGGLE) {
-                        mc_output_function_t fn =
-                            (action == MC_ACTION_TURN_L_TOGGLE) ? MC_OUT_FUNC_TURN_L : MC_OUT_FUNC_TURN_R;
-                        int ch = mc_output_find_channel_by_function(&s_config.outputs, fn);
-                        if (ch >= 0) {
-                            mc_output_set(&s_output, (uint8_t)ch, !mc_output_get_state(&s_output, (uint8_t)ch),
-                                          MC_OUT_SRC_LOCAL);
-                        }
-                    } else if (action == MC_ACTION_HAZARD_TOGGLE) {
-                        mc_output_hazard_press(&s_output, t);
-                    }
+                /* Handlebar bindings, for all three press types. Orthogonal
+                 * to the cheat-code above — mc_lock_cheatcode_press() only
+                 * ever acts while LOCKED, so a button configured for both an
+                 * action and (incidentally) part of the cheat-code buffer
+                 * safely does both.
+                 *
+                 * action_suppressed means a chord containing this button
+                 * already fired, so only the chord's actions run — see
+                 * mc_input.h. Note the cheat-code feed above deliberately
+                 * ignores that flag (AGENTS.md #3). */
+                if (!evt.data.press.action_suppressed) {
+                    dispatch_action_list(actions_for_press(evt.data.press.button, evt.data.press.type), t);
                 }
             } else {
                 /* The generic combos[] mechanism (chord/sequence bound to
                  * an arbitrary action_id) is orthogonal to the lock
                  * cheat-code, which mc_lock buffers independently from raw
-                 * short-press events — see mc_lock.h. No action is bound
-                 * to a generic combo yet (future phase). */
-                ESP_LOGI(TAG, "combo %u (action %u)", evt.data.combo.combo_index, evt.data.combo.action_id);
+                 * short-press events — see mc_lock.h. A chord is how
+                 * "press both turn buttons together to toggle hazards" is
+                 * expressed: combos[] entry of type chord, action_id
+                 * MC_ACTION_HAZARD_TOGGLE. */
+                ESP_LOGI(TAG, "combo %u (%u action(s))", evt.data.combo.combo_index,
+                         evt.data.combo.actions.count);
+                dispatch_action_list(&evt.data.combo.actions, t);
             }
         }
 
@@ -424,6 +580,7 @@ void app_main(void)
     s_app.diag = &s_diag;
     s_app.ota = &s_ota;
     s_app.event_log = &s_event_log;
+    s_app.input = &s_input;
     s_app.fill_status = fill_status_cb;
     s_app.persist_config = persist_config_cb;
     s_app.persist_keystore = persist_keystore_cb;

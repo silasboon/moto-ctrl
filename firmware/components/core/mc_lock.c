@@ -27,9 +27,8 @@ static bool ignition_is_live(const mc_output_engine_t *output)
 static void force_off_immobilized_channels(mc_output_engine_t *output)
 {
     for (uint8_t ch = 0; ch < MC_OUTPUT_COUNT; ch++) {
-        mc_output_function_t fn = output->config.channels[ch].function;
-        if ((fn == MC_OUT_FUNC_IGNITION || fn == MC_OUT_FUNC_STARTER) &&
-            mc_output_get_state(output, ch)) {
+        const mc_output_channel_config_t *cfg = &output->config.channels[ch];
+        if ((cfg->is_ignition || cfg->is_starter) && mc_output_get_state(output, ch)) {
             mc_output_set(output, ch, false, MC_OUT_SRC_LOCAL);
         }
     }
