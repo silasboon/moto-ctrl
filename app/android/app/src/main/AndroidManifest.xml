@@ -15,11 +15,22 @@
     <uses-permission android:name="android.permission.BLUETOOTH_SCAN" android:usesPermissionFlags="neverForLocation" />
     <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
 
+    <!-- No android:roundIcon: the ic_launcher_round set was dropped when the
+         launcher icons were replaced with an adaptive set (background +
+         foreground + monochrome), and the leftover reference failed resource
+         linking on the next clean build.
+
+         Removed rather than restored, deliberately. The adaptive icon in
+         mipmap-anydpi-v26 covers API 26+, where the launcher applies its own
+         mask — round, squircle, teardrop — so a hand-made round variant is
+         redundant there. On API 24-25 Android falls back to android:icon,
+         which is all roundIcon was ever a Nougat-era refinement of. Bringing
+         back the old round PNGs would have shipped the previous icon art
+         alongside the new. -->
     <application
       android:name=".MainApplication"
       android:label="@string/app_name"
       android:icon="@mipmap/ic_launcher"
-      android:roundIcon="@mipmap/ic_launcher_round"
       android:allowBackup="false"
       android:theme="@style/AppTheme"
       android:usesCleartextTraffic="${usesCleartextTraffic}"

@@ -69,6 +69,7 @@ static void build_status(mc_session_t *s, mc_app_t *app, mc_status_t *st)
     st->output_state_mask = mask;
     if (app->output != NULL) {
         st->lv_cutoff_active = mc_output_lv_cutoff_active(app->output);
+        st->hazard_active = mc_output_hazard_active(app->output);
     }
     if (app->lock != NULL) {
         st->lock_state = mc_lock_wire_state(app->lock);
@@ -296,6 +297,10 @@ static void handle_command(mc_session_t *s, mc_app_t *app,
          * check. The platform (app_task) is what actually pushes events; it
          * reads this flag. */
         s->input_learn = (body[0] != 0);
+        /* Optional second byte, so an older client that sends only the
+         * enable flag keeps its existing behaviour (bindings still fire). */
+        s->input_learn_suppress_actions =
+            s->input_learn && body_len >= 2 && body[1] != 0;
         send_result2(send, io, MC_CH_COMMAND, MC_OP_COMMAND_RESULT, op, MC_RESULT_OK);
         break;
     }
@@ -454,6 +459,20 @@ static void handle_command(mc_session_t *s, mc_app_t *app,
         break;
     }
     case MC_OP_TRANSFER_OWNERSHIP: {
+        /* The board nickname goes with the old owner. Selling the bike
+         * shouldn't hand the next rider "Dave's Bonneville" to discover and
+         * rename themselves. Only the name is reset — the rest of the config
+         * (channel roles, bindings, thresholds) is deliberately left alone,
+         * because a transferred board is still the same wiring loom. */
+        if (app->config != NULL && app->config->device_name[0] != '\0') {
+            memset(app->config->device_name, 0, MC_DEVICE_NAME_MAX);
+            if (app->persist_config != NULL) {
+                app->persist_config(app->app_ctx);
+            }
+            if (app->on_device_name_changed != NULL) {
+                app->on_device_name_changed(app->app_ctx);
+            }
+        }
         if (app->keystore != NULL) {
             mc_keystore_wipe(app->keystore);
         }
@@ -740,6 +759,13 @@ static void config_commit(mc_app_t *app, mc_session_t *s, mc_send_fn send, void 
         incoming.outputs.channels[ch].commanded_on = mc_output_get_state(app->output, ch);
     }
 
+    /* Captured before the assignment below overwrites it — the callback is
+     * only worth firing on an actual rename, and re-advertising on every
+     * config write would drop the advertisement (and any scan in progress)
+     * for no reason. */
+    bool name_changed =
+        strncmp(app->config->device_name, incoming.device_name, MC_DEVICE_NAME_MAX) != 0;
+
     *app->config = incoming;
     app->output->config = incoming.outputs;
     if (app->diag != NULL) {
@@ -759,6 +785,9 @@ static void config_commit(mc_app_t *app, mc_session_t *s, mc_send_fn send, void 
 
     if (app->persist_config != NULL) {
         app->persist_config(app->app_ctx);
+    }
+    if (name_changed && app->on_device_name_changed != NULL) {
+        app->on_device_name_changed(app->app_ctx);
     }
     send_result1(send, io, MC_CH_CONFIG, MC_OP_CONFIG_WRITE_RESULT, MC_RESULT_OK);
 }

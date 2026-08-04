@@ -265,4 +265,13 @@ export const CHANNEL_GATT: Record<number, ChannelGatt> = {
   },
 };
 
+/** Factory name, and what an unnamed board still advertises. NOT a discovery
+ * filter any more: boards are renameable (schema_version 8), so a scan that
+ * matched on this would miss every renamed board. Discovery keys on
+ * ADVERTISED_SERVICE_UUID instead. */
 export const DEVICE_NAME = 'MOTO-CTRL';
+
+/** The service UUID a MOTO-CTRL board puts in its primary advertising
+ * payload (firmware/main/ble/ble_app.c). This is the stable identifier —
+ * the advertised name is whatever the rider typed. */
+export const ADVERTISED_SERVICE_UUID = channelUuid(0x10);

@@ -15,9 +15,9 @@
             <BuildableReference
                BuildableIdentifier = "primary"
                BlueprintIdentifier = "13B07F861A680F5B00A75B9A"
-               BuildableName = "MotoCtrlNativeScratch.app"
-               BlueprintName = "MotoCtrlNativeScratch"
-               ReferencedContainer = "container:MotoCtrlNativeScratch.xcodeproj">
+               BuildableName = "MotoCtrl.app"
+               BlueprintName = "MotoCtrl"
+               ReferencedContainer = "container:MotoCtrl.xcodeproj">
             </BuildableReference>
          </BuildActionEntry>
       </BuildActionEntries>
@@ -33,9 +33,9 @@
             <BuildableReference
                BuildableIdentifier = "primary"
                BlueprintIdentifier = "00E356ED1AD99517003FC87E"
-               BuildableName = "MotoCtrlNativeScratchTests.xctest"
-               BlueprintName = "MotoCtrlNativeScratchTests"
-               ReferencedContainer = "container:MotoCtrlNativeScratch.xcodeproj">
+               BuildableName = "MotoCtrlTests.xctest"
+               BlueprintName = "MotoCtrlTests"
+               ReferencedContainer = "container:MotoCtrl.xcodeproj">
             </BuildableReference>
          </TestableReference>
       </Testables>
@@ -55,9 +55,9 @@
          <BuildableReference
             BuildableIdentifier = "primary"
             BlueprintIdentifier = "13B07F861A680F5B00A75B9A"
-            BuildableName = "MotoCtrlNativeScratch.app"
-            BlueprintName = "MotoCtrlNativeScratch"
-            ReferencedContainer = "container:MotoCtrlNativeScratch.xcodeproj">
+            BuildableName = "MotoCtrl.app"
+            BlueprintName = "MotoCtrl"
+            ReferencedContainer = "container:MotoCtrl.xcodeproj">
          </BuildableReference>
       </BuildableProductRunnable>
    </LaunchAction>
@@ -72,9 +72,9 @@
          <BuildableReference
             BuildableIdentifier = "primary"
             BlueprintIdentifier = "13B07F861A680F5B00A75B9A"
-            BuildableName = "MotoCtrlNativeScratch.app"
-            BlueprintName = "MotoCtrlNativeScratch"
-            ReferencedContainer = "container:MotoCtrlNativeScratch.xcodeproj">
+            BuildableName = "MotoCtrl.app"
+            BlueprintName = "MotoCtrl"
+            ReferencedContainer = "container:MotoCtrl.xcodeproj">
          </BuildableReference>
       </BuildableProductRunnable>
    </ProfileAction>

@@ -1,4 +1,4 @@
-package com.mototrl.app
+package com.motoctrl.app
 
 import android.app.Application
 import com.facebook.react.PackageList

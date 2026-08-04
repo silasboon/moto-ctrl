@@ -25,7 +25,12 @@ import {
   type Subscription,
 } from 'react-native-ble-plx';
 
-import { CHANNEL_GATT, DEVICE_NAME, MC_CH } from '../protocol/constants';
+import {
+  ADVERTISED_SERVICE_UUID,
+  CHANNEL_GATT,
+  DEVICE_NAME,
+  MC_CH,
+} from '../protocol/constants';
 import { base64ToBytes, bytesToBase64 } from '../protocol/frames';
 import type {
   ConnectionState,
@@ -56,6 +61,30 @@ function stateMessage(state: State): string {
     default:
       return 'Waiting for Bluetooth…';
   }
+}
+
+/* Identifies a MOTO-CTRL board from its advertisement.
+ *
+ * Keyed on the advertised service UUID, not the name: boards are renameable
+ * (schema_version 8), so a name match would find only boards nobody has
+ * renamed — precisely the ones a rider is least likely to be looking for.
+ * The firmware puts the UUID in the primary advertising payload for exactly
+ * this reason, with the name in the scan response.
+ *
+ * The name check is kept as a fallback for the case where a scan result
+ * arrives with no service data attached, which some Android stacks do on the
+ * first sighting. It only ever finds unrenamed boards, so it is a safety net
+ * and not the mechanism. */
+function isMotoCtrl(device: Device): boolean {
+  const advertised = device.serviceUUIDs ?? [];
+  if (
+    advertised.some(
+      u => u.toLowerCase() === ADVERTISED_SERVICE_UUID.toLowerCase(),
+    )
+  ) {
+    return true;
+  }
+  return device.name === DEVICE_NAME || device.localName === DEVICE_NAME;
 }
 
 /* One native manager for the whole app.
@@ -121,14 +150,17 @@ export class BlePlxTransport implements Transport {
             return;
           }
           if (!device) return;
+          if (!isMotoCtrl(device)) return;
           /* `name` is the GAP name; `localName` is what this particular
-           * advertisement carried. The board puts its complete name in the
-           * advertising payload, but which of the two ble-plx populates
+           * advertisement carried. Which of the two ble-plx populates
            * depends on the platform and on whether the peripheral has been
-           * seen before, so match either. */
-          if (device.name === DEVICE_NAME || device.localName === DEVICE_NAME) {
-            onFound({ id: device.id, name: DEVICE_NAME });
-          }
+           * seen before, so prefer whichever is present. A board whose scan
+           * response hasn't arrived yet still shows up under the factory
+           * name rather than as a blank row. */
+          onFound({
+            id: device.id,
+            name: device.localName ?? device.name ?? DEVICE_NAME,
+          });
         },
       );
     };

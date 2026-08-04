@@ -33,10 +33,28 @@ specification and must not be edited, softened, or reinterpreted away:
    from the "parked" state — never while ignition output is live.
 3. **Layered unlock — never lock the rider out.** All configured unlock methods
    work simultaneously: (a) phone-as-key BLE proximity/tap, (b) button cheat-code
-   on the handlebar buttons, (c) optional traditional ignition-switch input mode.
-   The button code is always available as fallback even when phone-as-key is
-   enabled. Physical factory reset: hold BOOT during power-on for 10s → wipes
-   bonds + config after a distinct LED pattern confirmation.
+   on the handlebar buttons, (c) traditional ignition-switch input mode.
+   **At least one non-phone method must be configured before the immobilizer
+   can be enabled** — either the button code or the ignition-switch input — so a
+   dead phone can never strand the rider. Physical factory reset: within 5s of
+   power-on, press BOOT and hold it for 10s → wipes bonds + config after a
+   distinct LED pattern confirmation.
+
+   *Corrected 2026-08-02.* This previously read "hold BOOT during power-on for
+   10s", which is not physically achievable: BOOT is GPIO0, and holding it
+   through reset is the ESP32-S3's strapping for UART download mode, so the
+   firmware never runs. The security properties are unchanged — physical
+   access, a deliberate 10s hold, a distinct confirmation — only the gesture
+   is now one a rider can actually perform. See `firmware/main/factory_reset.h`
+   for why the window is watched on the app tick rather than blocking boot.
+
+   *Amended 2026-08-01, by the project owner.* This requirement previously read
+   "the button code is always available as fallback even when phone-as-key is
+   enabled", i.e. the cheat-code was mandatory. A rider with an OEM ignition key
+   switch wired to an input already has a physical, non-phone way in, and
+   forcing them to also set a button code they will never use added no safety.
+   The invariant that matters — never only the phone — is unchanged and is
+   enforced in `mc_lock_config_validate()`.
 4. **Phone-as-key must be cryptographically sound.** BLE bonding with LE Secure
    Connections + application-layer challenge-response (device-stored key signs a
    per-session nonce). MAC address alone is never trusted. Support multiple

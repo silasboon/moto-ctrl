@@ -98,6 +98,15 @@ typedef struct {
      * fatal to the operation they're logging). */
     void (*log_event)(void *app_ctx, uint8_t type, uint8_t arg0, uint8_t arg1);
 
+    /* Called when config->device_name has just changed — a config write that
+     * renamed the board, or an ownership transfer resetting it. The platform
+     * wires this to whatever republishes the name (on ESP32: the GAP device
+     * name plus a re-advertise, since the name lives in the advertising
+     * payload and a running advertisement keeps the old one until it is
+     * rebuilt). May be NULL on hosts with no radio — the sim has none, and
+     * the name is still stored and exported normally there. */
+    void (*on_device_name_changed)(void *app_ctx);
+
     void *app_ctx;
 } mc_app_t;
 
@@ -121,6 +130,20 @@ typedef struct {
     /* MC_OP_INPUT_LEARN: push input events to this session (mc_protocol.h).
      * Cleared by mc_session_init(), so it can never outlive the BLE link. */
     bool input_learn;
+    /* INPUT_LEARN's optional second byte: while set, the platform must not
+     * run handlebar bindings for the presses it is reporting.
+     *
+     * For entering a cheat-code, where the rider is pressing whichever
+     * buttons make up their code and would otherwise sound the horn or
+     * flash the indicators four to ten times. Handlebar controls are inert
+     * for the duration, which is an acceptable trade only because the
+     * rider deliberately entered that mode and is standing at the bike.
+     *
+     * Deliberately does NOT gate the cheat-code matcher itself
+     * (mc_lock_cheatcode_press) or the brake-switch pass-through: the first
+     * is AGENTS.md #3's unlock fallback and must never be disableable from
+     * the app, the second is AGENTS.md #5's brake-light guarantee. */
+    bool input_learn_suppress_actions;
 } mc_session_t;
 
 /* Resets a session to unauthenticated. Call when a new connection opens. */

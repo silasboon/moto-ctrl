@@ -39,11 +39,12 @@ implementing it:
    entered from the "parked" state — never while the ignition output is
    live.
 3. **Layered unlock — never lock the rider out.** All configured unlock
-   methods (phone-as-key, button cheat-code, optional ignition-switch
-   input) work simultaneously. The button cheat-code is always available
-   as a fallback even when phone-as-key is enabled. A physical factory
-   reset (hold BOOT during power-on for 10s, once the board is already
-   running) wipes bonds and config after a distinct confirmation.
+   methods (phone-as-key, button cheat-code, ignition-switch input) work
+   simultaneously. At least one non-phone method — the cheat-code or the
+   ignition-switch input — must be configured before the immobilizer can be
+   enabled, so a dead phone can never strand the rider. A physical factory
+   reset (press BOOT within 5s of power-up, then hold for 10s) wipes bonds
+   and config after a distinct confirmation.
 4. **Phone-as-key must be cryptographically sound.** BLE bonding with LE
    Secure Connections plus an application-layer challenge-response — a
    bare MAC address is never trusted. Multiple paired phones, key

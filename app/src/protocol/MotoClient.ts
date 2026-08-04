@@ -91,6 +91,7 @@ function parseStatus(b: Uint8Array): Status {
     rssiDbm: (b[14]! << 24) >> 24,
     cheatcodeBackoff: (b[15]! & 0x01) !== 0,
     lvCutoffActive: (b[15]! & 0x02) !== 0,
+    hazardActive: (b[15]! & 0x04) !== 0,
   };
 }
 
@@ -297,14 +298,27 @@ export class MotoClient {
     return () => this.inputEventListeners.delete(listener);
   }
 
-  /** Turns button-identification learn mode on or off for this session
+  /**
+   * Turns button-identification learn mode on or off for this session
    * (docs/PROTOCOL.md §14.1). Off by default; the device also drops it on
-   * disconnect, so there's no risk of leaving it on across a reconnect. */
-  async inputLearn(enable: boolean): Promise<ResultOutcome> {
+   * disconnect, so there's no risk of leaving it on across a reconnect.
+   *
+   * `suppressActions` additionally stops the device running the handlebar
+   * bindings for the presses it reports — for capturing a cheat-code, where
+   * the rider is pressing whichever buttons make up their code and would
+   * otherwise sound the horn once per press. Handlebar controls are inert
+   * while it holds, so only ask for it in a mode the rider deliberately
+   * entered. The brake light and the cheat-code matcher itself are never
+   * suppressed.
+   */
+  async inputLearn(
+    enable: boolean,
+    suppressActions = false,
+  ): Promise<ResultOutcome> {
     const reply = await this.request(
       MC_CH.COMMAND,
       MC_OP.INPUT_LEARN,
-      new Uint8Array([enable ? 1 : 0]),
+      new Uint8Array([enable ? 1 : 0, suppressActions ? 1 : 0]),
     );
     return outcome(reply.body[1]!);
   }

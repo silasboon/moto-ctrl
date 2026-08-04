@@ -77,7 +77,15 @@ typedef struct {
  * without one. */
 typedef enum {
     MC_LOCK_CFG_OK = 0,
-    MC_LOCK_CFG_ENABLE_REQUIRES_CHEATCODE = 1u << 0,
+    /* AGENTS.md #3: the immobilizer may not be enabled with the phone as the
+     * only way in. At least one non-phone method must be configured — the
+     * button cheat-code OR an ignition-switch input.
+     *
+     * Was ENABLE_REQUIRES_CHEATCODE, i.e. the code specifically. A rider with
+     * an OEM key switch wired to an input already has a physical fallback, and
+     * making them also set a code they will never use bought no safety. The
+     * invariant that matters — never only the phone — is unchanged. */
+    MC_LOCK_CFG_ENABLE_REQUIRES_FALLBACK = 1u << 0,
     MC_LOCK_CFG_ENABLE_REQUIRES_IGNITION_CHANNEL = 1u << 1,
     MC_LOCK_CFG_BAD_IGNITION_SWITCH_INPUT = 1u << 2,
 } mc_lock_config_flags_t;

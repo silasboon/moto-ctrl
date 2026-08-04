@@ -48,8 +48,16 @@ service or characteristic.
 | Config `0x30` | Config `0x31` | `3` | Write, Notify |
 | OTA `0x40` | OTA `0x41` | `4` | Write, Notify |
 
-The device advertises as **`MOTO-CTRL`**; the Status service UUID is in the
-scan response.
+**Advertising layout.** The primary advertising payload carries the flags and
+the **Status service UUID** (`5a4f0010-…`); the **name** is in the scan
+response. Discover boards by that service UUID, never by name: the name is
+rider-configurable (`device_name`, §9) and defaults to `MOTO-CTRL` only until
+somebody changes it, so a name match finds only boards nobody has renamed.
+
+The two were the other way round before `schema_version` 8. The UUID moved
+into the primary payload so a scanner can filter on it reliably, and the name
+moved out so it has the room a 128-bit UUID left it without (about 10 bytes
+of the 31).
 
 Clients that will read config **must** negotiate an ATT MTU large enough to
 carry a config chunk frame (see §7): the 128-byte chunk payload plus a 4-byte
@@ -118,7 +126,7 @@ Snapshot layout (16 bytes, little-endian):
 | 10 | 2 | output state mask — bit *c* set ⇒ channel *c* is **commanded** on (rider/app intent — see §12's note on why this is not the same as "actually driven") |
 | 12 | 2 | output fault mask — bit *c* set ⇒ channel *c* has a real open-load/overcurrent fault, §12 |
 | 14 | 1 | RSSI (dBm, signed) — `0` if unknown |
-| 15 | 1 | bit 0: cheat-code entry is in backoff (§11.4); bit 1: low-voltage cutoff is active (§12); bits 2–7 reserved |
+| 15 | 1 | bit 0: cheat-code entry is in backoff (§11.4); bit 1: low-voltage cutoff is active (§12); bit 2: hazards are running (§9); bits 3–7 reserved |
 
 ## 6. Auth channel (`1`)
 
@@ -237,13 +245,15 @@ defaults; unknown `function` strings map to `"none"`.
 
 ```json
 {
-  "schema_version": 6,
+  "schema_version": 8,
+  "device_name": "",
   "outputs": {
     "channels": [
       { "name": "Low Beam", "behaviour": "toggle", "pwm_duty_pct": 100,
         "commanded_on": false, "essential": true, "is_ignition": false,
         "is_starter": false, "is_brake": false, "indicator": "none",
-        "hazard_member": false }
+        "hazard_member": false, "on_with_ignition": false,
+        "alternate_channel": -1 }
     ],
     "starter_interlock_input": -1,
     "brake_switch_input": -1,
@@ -327,6 +337,75 @@ defaults; unknown `function` strings map to `"none"`.
     commanded individually — signalling a turn, or switching the DRL on by
     itself, means the rider is no longer running hazards.
 
+    **Ending the hazards restores every member to the state it was in when
+    they started**, rather than switching the group off. Hazards borrow the
+    group; they don't own it. A DRL that was already lit is lit again
+    afterwards — the rider asked for the hazards to stop, not for their
+    running light to go out — and a member that was off stays off. When the
+    hazards end because a member was commanded directly, that channel is
+    exempt (it is being set explicitly) and the rest are restored, so
+    signalling a turn out of a hazard stop releases the opposite indicator
+    instead of leaving it latched on and blinking. An indicator restored to
+    ON re-arms its auto-cancel window from that moment, so a signal
+    interrupted by a hazard stop can't end up latched on for the rest of the
+    ride.
+
+    A press therefore keys on whether hazard mode is running, not on whether
+    every member happens to be lit: with restoring in place a group can
+    legitimately have channels on while the hazards are stopped.
+
+    Whether the hazards are running is reported on the status wire (byte 15
+    bit 2), **not** inferable from `output_state_mask`: members blink, so that
+    mask alternates several times a second and cannot distinguish running
+    hazards from stopped ones. A client showing a hazard button needs the bit
+    to label it correctly.
+
+  - `on_with_ignition` (`schema_version` 7) — the channel switches on when the
+    ignition channel switches on: what a key turned to `"on"` does on a stock
+    bike. DRLs, running lights, an instrument cluster.
+
+    **This flag governs switching ON only.** Switching the ignition OFF puts
+    *every* channel out, flagged or not. A key that killed only the circuits
+    it had lit, and left whatever the rider had switched on by hand still
+    burning, would not be a key — and is a good way to find a flat battery.
+    Hazard mode ends with it, so the status wire never reports running hazards
+    over a dark group. Hazards can still be started with the ignition off,
+    which is the point of a hazard switch on a parked bike.
+
+    **Edge-triggered, not held.** The rider may still switch a flagged channel
+    off while the ignition stays live, and it stays off until the next
+    ignition cycle. A held assertion would mean a DRL could not be turned off
+    without killing the ignition. Re-commanding an already-on ignition is not
+    an edge and re-lights nothing.
+
+    Restoring persisted state at boot does **not** fire this — it is not an
+    edge, and synthesising one would light channels the rider had switched off
+    before parking, contradicting the guarantee that boot replays exactly what
+    was last commanded. An ignition command that is refused (immobilizer)
+    likewise lights nothing, so this can never be a way around the lock.
+
+  - `alternate_channel` (`schema_version` 7) — index of the channel this one
+    alternates with (hi/lo beam, two DRL colours), or `-1` for none.
+
+    **Must be reciprocal**: if `A` names `B`, `B` must name `A`. A config
+    where it isn't is rejected whole (`MC_OUT_CFG_BAD_ALTERNATE`), because a
+    one-way link is worse than none — switching `A` on would put `B` out, but
+    switching `B` on would leave `A` lit, i.e. both beams burning. An
+    `alternate_channel` that is out of range or points at itself is parsed as
+    `-1` rather than failing the document, since a stray index is far more
+    likely to be a truncated or hand-edited file than an intent.
+
+    Lighting either member puts the other out, wherever the command came from
+    — app, button binding, or brake pass-through — because the rule lives in
+    the same place as turn mutual exclusion and so cannot be bypassed by
+    adding a caller. A pair is **at most one on**, not exactly one: a direct
+    command may still turn both off, so a rider can black out an aux pair from
+    the app. It is only the `512 + N` binding (§9) that never lands on off.
+
+    Both members of a pair carrying `on_with_ignition` is rejected
+    (`MC_OUT_CFG_ALTERNATE_BOTH_IGNITION`) — they would fight over which one
+    the ignition lights.
+
   **Migration from `schema_version` ≤ 5.** When the v6 keys are absent, roles
   are derived from the legacy `function` and behaviour from the legacy `mode`
   (plus v5's `momentary` bool):
@@ -362,6 +441,7 @@ defaults; unknown `function` strings map to `"none"`.
   | `2` | toggle the channel whose `function` is `turn_r` |
   | `3` | toggle hazards (both turn channels) |
   | `256 + N` | toggle output channel `N` directly, `0 ≤ N < 12` |
+  | `512 + N` | step the alternating pair channel `N` belongs to, `0 ≤ N < 12` |
 
   Ids `1`–`3` resolve by `function` and so depend on a channel being assigned
   that function; `256 + N` addresses a channel directly and always works,
@@ -369,6 +449,18 @@ defaults; unknown `function` strings map to `"none"`.
   outputs are electrically identical, so direct addressing is the general
   case and `1`–`3` exist only because turn/hazard carry flasher-pattern
   behaviour beyond a plain toggle.
+
+  `512 + N` (`schema_version` 7) drives an alternating pair: whichever member
+  is lit, light the other; from cold, light `N` itself. **It never lands on
+  both-off** — a headlight pair must not be switchable dark by a mistimed tap
+  at night. Turning a pair off entirely is still possible, just not through
+  this binding: it takes a direct command at the channel (`256 + N`, or the
+  app). The id is `REJECTED`/ignored if channel `N` has no
+  `alternate_channel`.
+
+  A second reserved range rather than a flag on `256 + N`, so an older
+  firmware that doesn't know the id ignores the binding outright instead of
+  misreading it as a plain toggle and leaving both beams switchable off.
 
   An unrecognised id is ignored, not an import error — a config written by a
   newer firmware stays loadable (§ tolerant-parse rule above).
@@ -410,9 +502,34 @@ defaults; unknown `function` strings map to `"none"`.
   **Board calibration is deliberately not here** — it has its own dedicated
   ops (§12) and never rides a config export/import, since it describes one
   physical board's analog sense lines, not a portable setting.
-- `schema_version` is 6 (4 added input action lists + button names, 5 added
+- `device_name` (`schema_version` 8) is the rider's name for the board — a
+  nickname or bike model — up to 23 characters plus a NUL. **Empty means the
+  factory default, `MOTO-CTRL`**, stored empty rather than as the literal so a
+  board that was never renamed stays distinguishable from one deliberately
+  named `MOTO-CTRL`; that is what lets `TRANSFER_OWNERSHIP` (§11.6) reset it.
+  An over-long name is truncated rather than rejected, like channel and button
+  names.
+
+  **Discovery does not use it.** Because the name is now arbitrary, a client
+  must identify a board by the status service UUID in its primary advertising
+  payload (§2), never by matching the name — a name match would find only
+  boards nobody has renamed. The name moved to the scan response when this
+  landed, and the service UUID moved the other way, precisely so the stable
+  identifier is the one a scanner can filter on.
+
+  Changing it republishes the GAP device name and rebuilds the advertisement.
+  Phones cache advertised names, so a client may keep showing the old one
+  until it next discovers the board.
+
+- `schema_version` is 8 (4 added input action lists + button names, 5 added
   per-channel `momentary`, 6 replaced `function`/`mode` with `behaviour` +
-  role flags and folded `momentary` into it).
+  role flags and folded `momentary` into it, 7 added `on_with_ignition` and
+  `alternate_channel`, 8 added `device_name`).
+
+  **7 needs no migration pass.** Both keys are absent from every earlier
+  document, and their defaults (`false`, `-1`) are exactly what those
+  documents meant: nothing came on with the ignition, and no channel had a
+  partner. Tolerant parse leaves the defaults in place.
 
 ## 10. OTA channel (`4`) — authenticated
 
@@ -588,10 +705,36 @@ Four states, reported as the status wire's `lock_state` byte (§5):
 
 | State | Meaning | Wire value |
 |---|---|---|
-| `DISABLED` | No immobilizer configured (no cheat-code set, or the immobilizer toggle is off). Nothing inhibited. | `UNLOCKED` (3) |
+| `DISABLED` | No immobilizer configured (the toggle is off, or no non-phone fallback exists). Nothing inhibited. | `UNLOCKED` (3) |
 | `UNLOCKED` | Immobilizer enabled and authorized. Ignition permitted. | `UNLOCKED` (3) |
 | `PARKED` | Enabled and unlocked, engine off *and* ignition output off. Auto-lock grace timer running. | `PARKED` (1) |
-| `LOCKED` | Enabled and immobilized. Ignition and starter outputs refused, from any source. | `LOCKED` (2) |
+| `LOCKED` | Enabled and immobilized. **Every** output refused from any source, except the hazard control. | `LOCKED` (2) |
+
+`DISABLED` and `UNLOCKED` share a wire value, so a client that needs to know
+whether an immobilizer exists at all must read the lock config (§11.2), not
+the status byte.
+
+**What LOCKED actually inhibits.** Every channel, not just ignition and
+starter: `mc_output_set(..., on = true)` returns `IMMOBILIZED` for any channel
+while the flag is set. A locked bike whose headlight and horn still answered
+to anyone walking past was not immobilized in any sense a rider would
+recognise. Switching outputs **off** is never blocked.
+
+`HAZARD_PRESS` is the one exception and still works while locked — a bike
+broken down at the roadside has to stay visible, and its rider may well have
+locked it before walking off. The exemption is the hazard *control*:
+commanding an individual hazard-group member is still refused.
+
+**Entering LOCKED turns the board off.** Every commanded channel is switched
+off as the lock engages, so a forgotten headlight can't flatten the battery
+overnight. Hazards that are *already running* are left alone, for the same
+roadside reason.
+
+**Leaving LOCKED turns the key.** Unlocking — by any method — energises the
+ignition output, so the bike is ready to start rather than needing a second
+action the rider has no reason to expect. This runs through the ordinary
+output path, so `on_with_ignition` channels (§9) light with it and the
+starter's own guards are untouched: unlocking never cranks anything.
 
 ```
                  immobilizer enabled (cheat-code set)
@@ -726,10 +869,19 @@ that ever needs them.
 
 `LOCK_SET_CONFIG` `[immobilizer_enabled:u8][methods_mask:u8][ignition_switch_input:u8][auto_lock_grace_ms:u16le][cheatcode_window_ms:u16le]`
 → `COMMAND_RESULT`. Validated before applying (`REJECTED` on failure, config
-unchanged): enabling requires a cheat-code already set (§11.2) *and* an
-`ignition`-function output channel configured (§9 — nothing to immobilize
-otherwise); enabling `IGNITION_SWITCH` requires a valid `ignition_switch_input`
-(0–7). Leaves the cheat-code itself untouched — it's only ever changed via
+unchanged): enabling requires **at least one non-phone unlock method** — a
+cheat-code already set (§11.2) *or* `IGNITION_SWITCH` enabled with a valid
+`ignition_switch_input` — *and* an `is_ignition` output channel configured
+(§9 — nothing to immobilize otherwise); enabling `IGNITION_SWITCH` requires a
+valid `ignition_switch_input` (0–7).
+
+The fallback rule is AGENTS.md #3: the phone may never be the only way in, so
+a flat phone battery can't strand the rider. It used to require the
+cheat-code specifically; a rider with an OEM key switch wired to an input
+already has a physical fallback, and forcing them to also set a code they
+would never use bought no safety. A method bit pointing at no assigned input
+does **not** count — that is a `BAD_IGNITION_SWITCH_INPUT` *and* a missing
+fallback. Leaves the cheat-code itself untouched — it's only ever changed via
 `CHEATCODE_SET`/`CHEATCODE_CLEAR`. `ignition_switch_input` reuses an input
 index exactly like `starter_interlock_input` (§9) — it is not a separate
 physical signal, just a debounced-level read of one of the 8 handlebar
@@ -739,12 +891,14 @@ momentary button).
 ### 11.6 Ownership transfer & factory reset
 
 `TRANSFER_OWNERSHIP` (authenticated, no payload): wipes every enrolled key
-(§6) and resets the lock config to factory defaults (immobilizer disabled,
+(§6), resets `device_name` to the factory default (§9 — the nickname goes
+with the old owner), and resets the lock config to factory defaults
+(immobilizer disabled,
 no cheat-code, no ignition-switch assignment) in one atomic operation,
 releasing any active immobilize. Requires an authenticated session, so a
 thief can't wipe the owner's keys. After it: the keystore is empty, so
 trust-on-first-use enrollment (§6) reopens for the next owner, and the
-immobilizer stays disabled until they configure a new cheat-code.
+immobilizer stays disabled until they configure a non-phone unlock method.
 
 The **physical** factory reset (`CONTRIBUTING.md` safety requirement #3:
 hold BOOT for 10s at power-on, confirmed by a distinct pattern before
@@ -1018,13 +1172,30 @@ offer to name it (`inputs.names`, §9).
 
 | Direction | Opcode | Payload |
 |---|---|---|
-| → device | `0x12` `INPUT_LEARN` | `enable:1` (0 = off, non-zero = on) |
+| → device | `0x12` `INPUT_LEARN` | `enable:1` (0 = off, non-zero = on) `[suppress_actions:1]` (optional) |
 | ← device | `0x92` `INPUT_EVENT` | `button:1` `press_type:1` `action_suppressed:1` |
 
 - `press_type`: `0` short, `1` long, `2` double.
 - `action_suppressed`: `1` when a chord consumed this press, so its own
   binding deliberately did not fire (§9). Lets the UI explain the behaviour
   rather than looking broken.
+- `suppress_actions` (optional second byte, default 0): while set, the device
+  reports presses **without running their handlebar bindings**. Intended for
+  capturing a cheat-code, where the rider presses whichever buttons make up
+  their code and would otherwise sound the horn or flash the indicators once
+  per press. It applies to press-event dispatch *and* to level-driven
+  momentary channels, which would otherwise still follow the hold; a momentary
+  output already held when suppression begins goes off rather than latching.
+
+  Handlebar controls are inert for the duration, so a client should only ask
+  for it in a mode the rider deliberately entered and can see. Two things are
+  never suppressed: the **cheat-code matcher** itself, which is AGENTS.md #3's
+  unlock fallback and must not be disableable from the app, and the
+  **brake-switch pass-through**, which is AGENTS.md #5's brake-light
+  guarantee.
+
+  Omitting the byte means "don't suppress", so a client written against the
+  earlier one-byte payload keeps its previous behaviour.
 - Replies to `INPUT_LEARN` with the usual `COMMAND_RESULT`; a missing
   `enable` byte is `BAD_REQUEST`.
 

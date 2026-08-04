@@ -1132,6 +1132,48 @@ static void test_input_learn_toggles_and_defaults_off(void)
     assert(s.input_learn == false);
 }
 
+/* The optional second byte: while set, the platform must not run handlebar
+ * bindings for the presses it reports, so setting a cheat-code on the horn
+ * button doesn't sound the horn once per press. */
+static void test_input_learn_action_suppression(void)
+{
+    fixture_t fx;
+    fixture_init(&fx);
+    mc_session_t s;
+    mc_session_init(&s);
+    recorder_t rec = {0};
+    uint8_t sk[MC_CRYPTO_SECRETKEY_BYTES];
+    enroll_and_auth(&s, &fx, &rec, sk);
+
+    assert(s.input_learn_suppress_actions == false);
+
+    /* One-byte payload keeps the old meaning, so a client written before
+     * this existed behaves exactly as it did. */
+    rec_reset(&rec);
+    uint8_t legacy[2] = { MC_OP_INPUT_LEARN, 1 };
+    mc_session_handle(&s, &fx.app, MC_CH_COMMAND, legacy, sizeof(legacy), rec_send, &rec);
+    assert(s.input_learn == true);
+    assert(s.input_learn_suppress_actions == false);
+
+    rec_reset(&rec);
+    uint8_t suppress[3] = { MC_OP_INPUT_LEARN, 1, 1 };
+    mc_session_handle(&s, &fx.app, MC_CH_COMMAND, suppress, sizeof(suppress), rec_send, &rec);
+    const rec_frame_t *r = last_frame(&rec, MC_CH_COMMAND, MC_OP_COMMAND_RESULT);
+    assert(r != NULL && r->data[2] == MC_RESULT_OK);
+    assert(s.input_learn == true);
+    assert(s.input_learn_suppress_actions == true);
+
+    /* Turning learn mode off drops suppression with it — leaving handlebar
+     * controls dead after the app stopped listening would be far worse than
+     * the problem this solves. */
+    rec_reset(&rec);
+    uint8_t off_suppressed[3] = { MC_OP_INPUT_LEARN, 0, 1 };
+    mc_session_handle(&s, &fx.app, MC_CH_COMMAND, off_suppressed,
+                      sizeof(off_suppressed), rec_send, &rec);
+    assert(s.input_learn == false);
+    assert(s.input_learn_suppress_actions == false);
+}
+
 static void test_input_learn_rejected_before_auth(void)
 {
     fixture_t fx;
@@ -1211,6 +1253,7 @@ int main(void)
     test_lock_engage_logs_event();
     test_transfer_ownership_logs_event_and_wipes_log();
     test_input_learn_toggles_and_defaults_off();
+    test_input_learn_action_suppression();
     test_input_learn_rejected_before_auth();
     test_input_learn_bad_request_without_payload();
     test_input_learn_cleared_by_session_init();

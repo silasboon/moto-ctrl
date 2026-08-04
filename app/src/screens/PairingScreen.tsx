@@ -323,12 +323,14 @@ export function PairingScreen({ onPaired, notice }: Props): React.JSX.Element {
                   (busy || !identity) && styles.dim,
                 ]}
               >
+                {/* Name only. The transport id underneath was a CoreBluetooth
+                 * UUID (or a MAC on Android) — meaningless to a rider, and
+                 * never the thing they identify their bike by. Boards are
+                 * renameable now, which is the real answer to telling two
+                 * apart. */}
                 <View style={styles.deviceText}>
                   <Text style={type.heading} numberOfLines={1}>
                     {d.name}
-                  </Text>
-                  <Text style={styles.deviceId} numberOfLines={1}>
-                    {d.id}
                   </Text>
                 </View>
                 {known && <Badge label="PAIRED" tone="on" />}
@@ -353,5 +355,4 @@ const styles = StyleSheet.create({
   deviceRowPressed: { backgroundColor: colors.raisedHover },
   dim: { opacity: 0.5 },
   deviceText: { flex: 1 },
-  deviceId: { ...type.valueSmall },
 });

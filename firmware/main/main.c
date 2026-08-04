@@ -60,6 +60,12 @@ static uint32_t now_ms(void)
     return (uint32_t)(esp_timer_get_time() / 1000);
 }
 
+static void device_name_changed_cb(void *ctx)
+{
+    (void)ctx;
+    ble_app_refresh_device_name();
+}
+
 static void persist_config_cb(void *ctx)
 {
     (void)ctx;
@@ -176,6 +182,13 @@ static bool channel_is_momentary(uint8_t ch)
  * honoured promptly rather than a tick late. */
 static void momentary_tick(uint32_t t)
 {
+    /* A momentary channel follows button LEVEL, so skipping the press-event
+     * dispatch above isn't enough to keep it quiet while an app is capturing
+     * a cheat-code — the hold itself would still drive it. Treating every
+     * button as released also means a channel that was being held when
+     * capture started goes off rather than latching on for the duration. */
+    bool suppressed = gatt_svr_input_actions_suppressed();
+
     for (uint8_t ch = 0; ch < MC_OUTPUT_COUNT; ch++) {
         if (s_config.outputs.channels[ch].behaviour != MC_OUT_BEHAVIOUR_MOMENTARY) {
             continue;
@@ -184,14 +197,14 @@ static void momentary_tick(uint32_t t)
          * tap binds to toggle/blink instead, so waiting for the hold
          * threshold keeps a tap from blipping the output. */
         bool held = false;
-        for (uint8_t b = 0; b < MC_INPUT_COUNT && !held; b++) {
+        for (uint8_t b = 0; b < MC_INPUT_COUNT && !held && !suppressed; b++) {
             if (binding_targets_channel(&s_config.inputs.long_press_actions[b], ch) &&
                 mc_input_hold_active(&s_input, b)) {
                 held = true;
             }
         }
         /* ...or a chord that is still being held down. */
-        for (uint8_t i = 0; i < s_config.inputs.combo_count && !held; i++) {
+        for (uint8_t i = 0; i < s_config.inputs.combo_count && !held && !suppressed; i++) {
             if (s_config.inputs.combos[i].type == MC_COMBO_CHORD &&
                 binding_targets_channel(&s_config.inputs.combos[i].actions, ch) &&
                 mc_input_chord_held(&s_input, i)) {
@@ -232,6 +245,21 @@ static bool dispatch_action(mc_action_id_t action, uint32_t t)
             return true;
         }
         mc_output_set(&s_output, ch, !mc_output_get_state(&s_output, ch), MC_OUT_SRC_LOCAL);
+        return true;
+    }
+
+    /* Alternating pair (mc_types.h): step hi/lo, or two DRL colours. */
+    if (action >= MC_ACTION_OUTPUT_ALTERNATE_BASE &&
+        action < MC_ACTION_OUTPUT_ALTERNATE_BASE + MC_OUTPUT_COUNT) {
+        uint8_t ch = (uint8_t)(action - MC_ACTION_OUTPUT_ALTERNATE_BASE);
+        int8_t partner = s_config.outputs.channels[ch].alternate_channel;
+        /* Same reason as the toggle branch: momentary_tick() drives these
+         * from button level, and stepping the pair here too would fight it. */
+        if (channel_is_momentary(ch) ||
+            (partner >= 0 && partner < MC_OUTPUT_COUNT && channel_is_momentary((uint8_t)partner))) {
+            return true;
+        }
+        mc_output_alternate_press(&s_output, ch, MC_OUT_SRC_LOCAL);
         return true;
     }
 
@@ -290,6 +318,12 @@ static void app_task(void *arg)
     bool raw[BOARD_INPUT_COUNT];
     for (;;) {
         uint32_t t = now_ms();
+
+        /* First: a confirmed reset erases NVS and reboots, so there is no
+         * point advancing any other state this tick. Inert after the first
+         * few seconds of the run. */
+        factory_reset_tick(t);
+
         input_hal_gpio_sample(raw);
         mc_input_poll(&s_input, t, raw);
 
@@ -386,7 +420,13 @@ static void app_task(void *arg)
                  * already fired, so only the chord's actions run — see
                  * mc_input.h. Note the cheat-code feed above deliberately
                  * ignores that flag (AGENTS.md #3). */
-                if (!evt.data.press.action_suppressed) {
+                /* An app capturing a cheat-code asks for its presses not to
+                 * fire bindings (docs/PROTOCOL.md §14.1) — otherwise setting
+                 * a code that uses the horn button sounds the horn once per
+                 * press. Note this is checked AFTER the cheat-code feed
+                 * above, which is never suppressible (AGENTS.md #3). */
+                if (!evt.data.press.action_suppressed &&
+                    !gatt_svr_input_actions_suppressed()) {
                     dispatch_action_list(actions_for_press(evt.data.press.button, evt.data.press.type), t);
                 }
             } else {
@@ -467,11 +507,12 @@ void app_main(void)
     ESP_ERROR_CHECK(nvs_err);
     ESP_LOGI(TAG, "MOTO-CTRL boot: NVS init done");
 
-    /* AGENTS.md #3: hold BOOT for 10s at power-on to factory reset. Must run
-     * before config/keystore/lock are loaded below, so a confirmed reset
-     * takes effect before anything reads the blobs it just wiped. A normal
-     * boot (BOOT not held) returns immediately — no delay added. */
-    (void)factory_reset_check();
+    /* AGENTS.md #3's physical factory reset. Only ARMS here — the watching
+     * happens on the app tick, for a few seconds only (see factory_reset.h
+     * for why a check at power-on could never actually be triggered by hand).
+     * Adds no delay to boot, which AGENTS.md #1's <250ms output restore
+     * budget would not tolerate. */
+    factory_reset_init();
 
     /* Config + keystore: degrade to defaults/empty on any NVS failure rather
      * than aborting (AGENTS.md #1 — never let an error path drop outputs). */
@@ -583,6 +624,7 @@ void app_main(void)
     s_app.input = &s_input;
     s_app.fill_status = fill_status_cb;
     s_app.persist_config = persist_config_cb;
+    s_app.on_device_name_changed = device_name_changed_cb;
     s_app.persist_keystore = persist_keystore_cb;
     s_app.persist_lock = persist_lock_cb;
     s_app.persist_diag_calib = persist_diag_calib_cb;

@@ -17,16 +17,24 @@
 import React, { useEffect, useState } from 'react';
 import { StyleSheet, Switch, Text, TouchableOpacity, View } from 'react-native';
 
-import { LOCK_METHOD } from '../protocol/constants';
+import { INPUT_COUNT, LOCK_METHOD } from '../protocol/constants';
 import type { MotoClient } from '../protocol/MotoClient';
-import { defaultLockConfig, type LockConfig } from '../protocol/types';
 import {
-  Input,
-  KeyboardAwareScroll,
+  defaultLockConfig,
+  type DeviceConfig,
+  type LockConfig,
+} from '../protocol/types';
+import {
   NumberInput,
+  Screen,
+  SkeletonScreen,
   useLeaveGuard,
 } from '../ui/components';
 import { colors } from '../ui/theme';
+
+/** Matches MC_LOCK_CHEATCODE_MIN_LEN / MAX_LEN (mc_lock.h). */
+const CHEATCODE_MIN = 4;
+const CHEATCODE_MAX = 10;
 
 interface Props {
   client: MotoClient;
@@ -55,16 +63,6 @@ function Chip({
   );
 }
 
-/** Parses "0,1,2,3" style input into button indices, silently dropping
- * anything out of the 0-7 range so a stray character doesn't produce a
- * confusing device-side BAD_REQUEST. */
-function parseCode(text: string): number[] {
-  return text
-    .split(',')
-    .map(s => parseInt(s.trim(), 10))
-    .filter(n => Number.isInteger(n) && n >= 0 && n <= 7);
-}
-
 export function LockScreen({
   client,
   onDone,
@@ -76,12 +74,33 @@ export function LockScreen({
   const [error, setError] = useState<string | null>(null);
   const [saveResult, setSaveResult] = useState<string | null>(null);
 
-  const [codeText, setCodeText] = useState('');
+  /* Cheat-code capture. The code is entered on the handlebar buttons, twice,
+   * rather than typed as indices.
+   *
+   * Typing "0,1,2,3" asked the rider to know which physical switch is input 3
+   * — a mapping they have no reason to hold in their head, and which they'd
+   * have to get right blind, since the code is only ever ENTERED on the
+   * handlebars. Capturing it the same way it will be used means the thing
+   * they practise is the thing that unlocks the bike.
+   *
+   * Twice, because a mistyped code is discoverable but a mis-pressed one is
+   * not: the device stores a salted hash and can never read it back, so a
+   * wrong code that both parties agree on is only found out at the roadside. */
+  const [capture, setCapture] = useState<'idle' | 'first' | 'second' | 'test'>(
+    'idle',
+  );
+  const [firstEntry, setFirstEntry] = useState<number[]>([]);
+  const [entry, setEntry] = useState<number[]>([]);
   const [codeBusy, setCodeBusy] = useState(false);
   const [codeResult, setCodeResult] = useState<string | null>(null);
-
-  const [testText, setTestText] = useState('');
   const [testResult, setTestResult] = useState<string | null>(null);
+
+  /* The output config, purely to check an ignition channel exists. The
+   * device validates that too, but LOCK_SET_CONFIG can only answer
+   * REJECTED — one word for three different unmet requirements — so the
+   * rider would be left guessing which. Checking here turns it into a
+   * sentence that says what to go and fix. */
+  const [outputs, setOutputs] = useState<DeviceConfig | null>(null);
 
   const [transferring, setTransferring] = useState(false);
   const [confirmTransfer, setConfirmTransfer] = useState(false);
@@ -104,6 +123,72 @@ export function LockScreen({
       .finally(() => setLoading(false));
   }, [client]);
 
+  useEffect(() => {
+    client
+      .configRead()
+      .then(setOutputs)
+      .catch(() => {});
+  }, [client]);
+
+  /* Learn mode pushes every debounced press to the app (docs/PROTOCOL.md
+   * §14.1). It must not outlive the capture — the device drops it on
+   * disconnect too, so a failed call here is not fatal. */
+  const capturing = capture !== 'idle';
+  useEffect(() => {
+    if (!capturing) return undefined;
+    /* Suppressed: the rider is about to press whatever buttons make up
+     * their code, and those buttons have jobs. */
+    client.inputLearn(true, true).catch(() => {});
+    const unsub = client.onInputEvent(event => {
+      /* Short presses only, matching what the firmware feeds the matcher
+       * (mc_lock.h) — a long press would be recorded here and then never
+       * reproduce at the roadside. */
+      if (event.pressType !== 'short') return;
+      setEntry(prev =>
+        prev.length >= CHEATCODE_MAX ? prev : [...prev, event.button],
+      );
+    });
+    return () => {
+      unsub();
+      client.inputLearn(false).catch(() => {});
+    };
+  }, [client, capturing]);
+
+  function beginCapture(): void {
+    setCodeResult(null);
+    setFirstEntry([]);
+    setEntry([]);
+    setCapture('first');
+  }
+
+  function cancelCapture(): void {
+    setCapture('idle');
+    setFirstEntry([]);
+    setEntry([]);
+  }
+
+  function acceptEntry(): void {
+    if (capture === 'test') {
+      void testCheatcode(entry);
+      return;
+    }
+    if (capture === 'first') {
+      setFirstEntry(entry);
+      setEntry([]);
+      setCapture('second');
+      return;
+    }
+    if (
+      firstEntry.length !== entry.length ||
+      firstEntry.some((b, i) => b !== entry[i])
+    ) {
+      setCodeResult("Those two didn't match. Start again.");
+      cancelCapture();
+      return;
+    }
+    void commitCheatcode(entry);
+  }
+
   async function refreshConfig(): Promise<void> {
     try {
       const fresh = await client.lockGetConfig();
@@ -115,7 +200,33 @@ export function LockScreen({
     }
   }
 
+  /** Mirrors mc_lock_config_validate(). Returns why the device would refuse
+   * this config, or null if it wouldn't. */
+  function whyRejected(): string | null {
+    if (!config.immobilizerEnabled) return null;
+    const hasIgnitionOutput = outputs?.outputs.channels.some(
+      c => c.is_ignition,
+    );
+    if (outputs && !hasIgnitionOutput) {
+      return 'No output is marked as the ignition, so there is nothing to immobilize. Set one under Setup → Outputs first.';
+    }
+    const hasSwitch =
+      (config.methodsMask & LOCK_METHOD.IGNITION_SWITCH) !== 0 &&
+      config.ignitionSwitchInput >= 0 &&
+      config.ignitionSwitchInput < INPUT_COUNT;
+    if (!config.cheatcodeSet && !hasSwitch) {
+      return 'You need one way in that is not your phone: set a cheat-code below, or turn on Ignition switch and assign an input.';
+    }
+    return null;
+  }
+
   async function saveConfig(): Promise<void> {
+    const blocked = whyRejected();
+    if (blocked) {
+      setSaveResult(null);
+      setError(blocked);
+      return;
+    }
     setSaving(true);
     setError(null);
     setSaveResult(null);
@@ -124,7 +235,9 @@ export function LockScreen({
       if (result.ok) {
         setSaveResult('Saved.');
       } else {
-        setSaveResult(`Rejected by device: ${result.resultName}`);
+        setSaveResult(
+          `Rejected by device: ${result.resultName}. ${whyRejected() ?? 'Check that an ignition output is configured and one non-phone unlock method is set.'}`,
+        );
       }
       await refreshConfig();
     } catch (err) {
@@ -134,12 +247,7 @@ export function LockScreen({
     }
   }
 
-  async function setCheatcode(): Promise<void> {
-    const buttons = parseCode(codeText);
-    if (buttons.length < 4 || buttons.length > 10) {
-      setCodeResult(`Need 4-10 button indices (0-7), got ${buttons.length}.`);
-      return;
-    }
+  async function commitCheatcode(buttons: number[]): Promise<void> {
     setCodeBusy(true);
     setCodeResult(null);
     try {
@@ -148,7 +256,7 @@ export function LockScreen({
         result.ok ? 'Cheat-code set.' : `Rejected: ${result.resultName}`,
       );
       if (result.ok) {
-        setCodeText('');
+        cancelCapture();
         await refreshConfig();
       }
     } catch (err) {
@@ -166,7 +274,7 @@ export function LockScreen({
       setCodeResult(
         result.ok
           ? 'Cheat-code cleared.'
-          : `Rejected: ${result.resultName} — disable the immobilizer first (it's the mandatory fallback while enabled).`,
+          : `Rejected: ${result.resultName} — with no ignition switch assigned, this code is the only way in besides your phone. Assign one, or disable the immobilizer first.`,
       );
       if (result.ok) {
         await refreshConfig();
@@ -178,12 +286,7 @@ export function LockScreen({
     }
   }
 
-  async function testCheatcode(): Promise<void> {
-    const buttons = parseCode(testText);
-    if (buttons.length === 0) {
-      setTestResult('Enter a candidate sequence to test.');
-      return;
-    }
+  async function testCheatcode(buttons: number[]): Promise<void> {
     try {
       const result = await client.cheatcodeTest(buttons);
       setTestResult(
@@ -195,6 +298,8 @@ export function LockScreen({
       );
     } catch (err) {
       setTestResult(err instanceof Error ? err.message : String(err));
+    } finally {
+      cancelCapture();
     }
   }
 
@@ -220,15 +325,20 @@ export function LockScreen({
 
   if (loading) {
     return (
-      <View style={styles.center}>
-        <Text>Loading…</Text>
-      </View>
+      <SkeletonScreen title="Lock / Immobilizer" onBack={back} cards={4} />
     );
   }
 
   const methodPhone = (config.methodsMask & LOCK_METHOD.PHONE) !== 0;
   const methodIgnSwitch =
     (config.methodsMask & LOCK_METHOD.IGNITION_SWITCH) !== 0;
+  /* Mirrors mc_lock_config_validate(): a method bit pointing at no input is
+   * not a way in, so the switch only counts once one is assigned. */
+  const hasNonPhoneFallback =
+    config.cheatcodeSet ||
+    (methodIgnSwitch &&
+      config.ignitionSwitchInput >= 0 &&
+      config.ignitionSwitchInput < INPUT_COUNT);
 
   function toggleMethod(bit: number, on: boolean): void {
     setConfig(prev => ({
@@ -238,17 +348,7 @@ export function LockScreen({
   }
 
   return (
-    <KeyboardAwareScroll
-      style={styles.container}
-      contentContainerStyle={styles.content}
-    >
-      <View style={styles.header}>
-        <Text style={styles.title}>Lock / Immobilizer</Text>
-        <TouchableOpacity onPress={back}>
-          <Text style={styles.link}>Back</Text>
-        </TouchableOpacity>
-      </View>
-
+    <Screen title="Lock / Immobilizer" onBack={back}>
       <View style={styles.row}>
         <Text style={styles.rowLabel}>Immobilizer enabled</Text>
         <Switch
@@ -258,11 +358,21 @@ export function LockScreen({
           }
         />
       </View>
-      {config.immobilizerEnabled && !config.cheatcodeSet && (
+      {/* AGENTS.md #3: the phone may never be the only way in. Either
+       * fallback satisfies it, so a rider with an OEM key switch is not
+       * forced to also set a code they will never use. */}
+      {config.immobilizerEnabled && !hasNonPhoneFallback && (
         <Text style={styles.warn}>
-          A cheat-code must be set (below) before this can be enabled —
-          it&apos;s the mandatory fallback and can never be turned off while the
-          immobilizer is on.
+          Set a cheat-code below, or assign an ignition switch, before turning
+          this on. One way in that isn&apos;t your phone is required, so a flat
+          battery can never strand you.
+        </Text>
+      )}
+      {config.immobilizerEnabled && (
+        <Text style={styles.hint}>
+          While locked, nothing switches on — not the ignition, not the lights.
+          Hazards are the exception, so a broken-down bike can be left flashing.
+          Unlocking turns the ignition on, ready to start.
         </Text>
       )}
 
@@ -311,23 +421,27 @@ export function LockScreen({
       )}
 
       <Text style={styles.sectionTitle}>Timing</Text>
+      {/* Both are tens of seconds in practice, so they read in seconds and
+       * store milliseconds — see NumberField's `scale`. */}
       <View style={styles.row}>
-        <Text style={styles.rowLabel}>Auto-lock grace (ms)</Text>
+        <Text style={styles.rowLabel}>Auto-lock grace (seconds)</Text>
         <NumberInput
           style={styles.numInput}
           value={config.autoLockGraceMs}
           min={0}
+          scale={1000}
           onChangeValue={v =>
             setConfig(prev => ({ ...prev, autoLockGraceMs: v }))
           }
         />
       </View>
       <View style={styles.row}>
-        <Text style={styles.rowLabel}>Cheat-code entry window (ms)</Text>
+        <Text style={styles.rowLabel}>Cheat-code window (seconds)</Text>
         <NumberInput
           style={styles.numInput}
           value={config.cheatcodeWindowMs}
           min={0}
+          scale={1000}
           onChangeValue={v =>
             setConfig(prev => ({ ...prev, cheatcodeWindowMs: v }))
           }
@@ -351,45 +465,104 @@ export function LockScreen({
              locked — this app never reads it back.`
           : 'Not set.'}
       </Text>
-      <Input
-        style={styles.nameInput}
-        value={codeText}
-        onChangeText={setCodeText}
-        placeholder="new code, e.g. 0,1,2,3 (4-10 button indices, 0-7)"
-      />
-      <View style={styles.actionRow}>
-        <TouchableOpacity
-          style={[styles.smallButton, codeBusy && styles.disabled]}
-          onPress={setCheatcode}
-          disabled={codeBusy}
-        >
-          <Text style={styles.smallButtonText}>Set</Text>
-        </TouchableOpacity>
-        <TouchableOpacity
-          style={[
-            styles.smallButton,
-            styles.dangerButton,
-            codeBusy && styles.disabled,
-          ]}
-          onPress={clearCheatcode}
-          disabled={codeBusy}
-        >
-          <Text style={styles.smallButtonText}>Clear</Text>
-        </TouchableOpacity>
-      </View>
+      {capturing ? (
+        <>
+          <Text style={styles.rowLabel}>
+            {capture === 'test'
+              ? 'Press the code you want to check'
+              : capture === 'first'
+                ? 'Press your code on the handlebar buttons'
+                : 'Now press it again to confirm'}
+          </Text>
+          {/* Dots, not button numbers. The rider is watching their own hands;
+           * printing which input each press mapped to would put the code on
+           * screen for anyone stood beside the bike. */}
+          <View style={styles.chipRow}>
+            {entry.length === 0 ? (
+              <Text style={styles.hint}>Waiting for the first press…</Text>
+            ) : (
+              entry.map((_, i) => <View key={i} style={styles.dot} />)
+            )}
+          </View>
+          <Text style={styles.hint}>
+            {entry.length} of {CHEATCODE_MIN}–{CHEATCODE_MAX} presses. Your
+            handlebar controls are paused while you do this, so nothing switches
+            on as you press.
+          </Text>
+          <View style={styles.actionRow}>
+            <TouchableOpacity
+              style={[
+                styles.smallButton,
+                (entry.length < CHEATCODE_MIN || codeBusy) && styles.disabled,
+              ]}
+              onPress={acceptEntry}
+              disabled={entry.length < CHEATCODE_MIN || codeBusy}
+            >
+              <Text style={styles.smallButtonText}>
+                {capture === 'test'
+                  ? 'Check'
+                  : capture === 'first'
+                    ? 'Next'
+                    : 'Save code'}
+              </Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.smallButton}
+              onPress={() => setEntry([])}
+              disabled={codeBusy}
+            >
+              <Text style={styles.smallButtonText}>Undo all</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.smallButton}
+              onPress={cancelCapture}
+              disabled={codeBusy}
+            >
+              <Text style={styles.smallButtonText}>Cancel</Text>
+            </TouchableOpacity>
+          </View>
+        </>
+      ) : (
+        <View style={styles.actionRow}>
+          <TouchableOpacity
+            style={[styles.smallButton, codeBusy && styles.disabled]}
+            onPress={beginCapture}
+            disabled={codeBusy}
+          >
+            <Text style={styles.smallButtonText}>
+              {config.cheatcodeSet ? 'Change code' : 'Set code'}
+            </Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[
+              styles.smallButton,
+              styles.dangerButton,
+              codeBusy && styles.disabled,
+            ]}
+            onPress={clearCheatcode}
+            disabled={codeBusy}
+          >
+            <Text style={styles.smallButtonText}>Clear</Text>
+          </TouchableOpacity>
+        </View>
+      )}
       {codeResult && <Text style={styles.hint}>{codeResult}</Text>}
 
-      <Text style={styles.sectionTitle}>
-        Test a candidate (practice — no side effects)
+      <Text style={styles.sectionTitle}>Practise it (no side effects)</Text>
+      <Text style={styles.hint}>
+        Checks a sequence against the stored code without unlocking anything —
+        worth doing once before you rely on it at the roadside.
       </Text>
-      <Input
-        style={styles.nameInput}
-        value={testText}
-        onChangeText={setTestText}
-        placeholder="e.g. 0,1,2,3"
-      />
-      <TouchableOpacity style={styles.smallButton} onPress={testCheatcode}>
-        <Text style={styles.smallButtonText}>Test</Text>
+      <TouchableOpacity
+        style={[styles.smallButton, capturing && styles.disabled]}
+        onPress={() => {
+          setTestResult(null);
+          setEntry([]);
+          setCapture('test');
+        }}
+        disabled={capturing || !config.cheatcodeSet}
+      >
+        <Text style={styles.smallButtonText}>Practise</Text>
       </TouchableOpacity>
       {testResult && <Text style={styles.hint}>{testResult}</Text>}
 
@@ -436,7 +609,7 @@ export function LockScreen({
           </View>
         </View>
       )}
-    </KeyboardAwareScroll>
+    </Screen>
   );
 }
 
@@ -466,6 +639,12 @@ const styles = StyleSheet.create({
   },
   hint: { fontSize: 12, color: colors.textFaint },
   warn: { fontSize: 12, color: colors.warn },
+  dot: {
+    width: 12,
+    height: 12,
+    borderRadius: 6,
+    backgroundColor: colors.accent,
+  },
   chipRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 6 },
   chip: {
     paddingVertical: 6,

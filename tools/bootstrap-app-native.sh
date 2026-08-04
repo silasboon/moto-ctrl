@@ -17,17 +17,21 @@ fi
 scratch="$(mktemp -d)"
 trap 'rm -rf "$scratch"' EXIT
 
+# Names must match what the checked-in native projects already use, or a
+# regeneration silently produces a project that no longer matches the Xcode
+# scheme, the Gradle applicationId, or the bundle identifier registered with
+# Apple. MotoCtrl is also app.json's `name` and getMainComponentName().
 echo "Generating a bare RN ${rn_version} project in a scratch dir..."
-npx --yes @react-native-community/cli init MotoCtrlNativeScratch \
+npx --yes @react-native-community/cli init MotoCtrl \
   --version "${rn_version}" \
-  --directory "$scratch/MotoCtrlNativeScratch" \
-  --package-name com.mototrl.app \
+  --directory "$scratch/MotoCtrl" \
+  --package-name com.motoctrl.app \
   --pm npm \
   --skip-git-init \
   --skip-install
 
-cp -R "$scratch/MotoCtrlNativeScratch/ios" "$app_dir/ios"
-cp -R "$scratch/MotoCtrlNativeScratch/android" "$app_dir/android"
+cp -R "$scratch/MotoCtrl/ios" "$app_dir/ios"
+cp -R "$scratch/MotoCtrl/android" "$app_dir/android"
 
 echo "Done. Review app/ios and app/android, then:"
 echo "  cd app && npm install && npx pod-install ios"

@@ -57,23 +57,53 @@ download mode by hand, using the two buttons next to H1
    talk to it. Run your flash command now (see below) — if it times out
    waiting for a device, repeat the sequence.
 
-> **Don't confuse this with the factory-reset button.** BOOT is also used,
-> while the application firmware is already running normally, as the
-> physical factory-reset control (hold it down for 10 seconds while the
-> board is powered and running — see `CONTRIBUTING.md` and
-> `DISCLAIMER.md`). Those are two different things happening on the same
-> physical button at two different times:
+> **Don't confuse this with the factory-reset gesture.** BOOT is also the
+> physical factory-reset control. Same button, two different things, told
+> apart entirely by *when* you press it:
 >
-> - Holding BOOT **through** a power-up/reset (i.e. before and during step 3
->   above) puts the ROM into UART download mode — the firmware never runs at
->   all until you power-cycle again without holding BOOT.
-> - Pressing and holding BOOT **after** the board is already up and running
->   normally is what the application firmware watches for to trigger a
->   factory reset (bond/config wipe).
+> - Holding BOOT **through** a power-up or reset (i.e. before and during
+>   step 3 above) puts the ROM into UART download mode. The application
+>   firmware never runs at all until you power-cycle without holding BOOT.
+>   This is what you want for flashing.
+> - Pressing BOOT **within 5 seconds after** the board powers up, and then
+>   holding it for 10 seconds, triggers a factory reset — see
+>   [Factory reset](#factory-reset) below.
 >
-> If you meant to factory-reset the board and it doesn't seem to respond,
-> make sure you're pressing BOOT while the board is already running, not
-> while cycling power — the two produce very different outcomes.
+> The distinction is not arbitrary: BOOT is GPIO0, an ESP32-S3 strapping
+> pin. Its level when reset releases is what selects download mode, so a
+> factory reset can only ever be a gesture the firmware sees *after* it has
+> started running.
+
+## Factory reset
+
+Wipes the paired phone keys, the output/input configuration and the
+immobilizer's lock state and cheat-code, returning the board to a
+re-enrollable factory state. Board calibration survives — it describes this
+physical board's sense lines, not the owner's settings.
+
+**No computer required.**
+
+1. Power the board up normally, with BOOT **not** pressed. (If you hold it
+   through power-up you get UART download mode instead — see the callout
+   above.)
+2. **Within 5 seconds**, press and hold **BOOT (SW2)**.
+3. Keep holding for **10 seconds**.
+4. All twelve outputs blink together six times. That is the confirmation —
+   this board has no dedicated status LED, so the pattern is deliberately one
+   no configured lighting function ever produces.
+5. The board erases and reboots itself, coming up factory-fresh.
+
+Releasing BOOT early cancels, and you can press again while the 5-second
+window is still open. Once that window closes the firmware stops watching
+until the next boot, so a stuck or shorted button can never wipe a bike's
+configuration mid-ride.
+
+If you have UART access anyway, erasing the NVS partition does the same
+thing without the timing, and leaves the firmware in place:
+
+```sh
+python -m esptool --chip esp32s3 -p /dev/ttyUSB0 erase_region 0x9000 0x8000
+```
 
 ## Flashing
 

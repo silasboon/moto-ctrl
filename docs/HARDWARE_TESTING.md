@@ -175,22 +175,30 @@ With the immobilizer enabled and a cheat-code set:
 
 ## 9. Physical factory reset
 
-- [ ] With the board already running normally (**not** during power-up —
-      see `docs/FLASHING.md`'s callout on why those are different), press
-      and hold BOOT for the full 10 seconds and confirm the distinct
-      all-outputs-blink confirmation pattern, then confirm bonds and
-      config were actually wiped (re-pairing required, config back to
-      defaults).
-- [ ] Releasing BOOT before 10 seconds cancels it with no effect.
-- [ ] **Flag if this doesn't trigger at all**: `factory_reset_check()`
-      reads GPIO0 as a plain input at the very start of `app_main()`, which
-      only runs at all if the ROM didn't already sample GPIO0 low at the
-      reset/strap instant and enter UART download mode instead (see
-      `docs/FLASHING.md`). If holding BOOT immediately after power-up
-      never triggers a reset on real hardware, that's a real finding to
-      report, not bench-tester error — verify the exact timing window that
-      does/doesn't work and update `docs/FLASHING.md`'s guidance
-      accordingly.
+> The "flag if this doesn't trigger at all" item that used to sit here was
+> right, and it was confirmed by inspection rather than on the bench: the
+> old `factory_reset_check()` sampled GPIO0 once, a few hundred ms into
+> `app_main()`, and holding BOOT through reset enters UART download mode so
+> the firmware never runs. There was no reachable gesture. It is now a
+> 5-second arming window watched on the app tick — see
+> `firmware/main/factory_reset.h`. **This has not been exercised on real
+> hardware yet**; the items below are the first real test of it.
+
+- [ ] Power the board up normally, **without** BOOT held. Within 5 seconds,
+      press and hold BOOT for the full 10 seconds. Confirm the distinct
+      all-outputs-blink pattern, that the board reboots itself, and that
+      bonds and config were actually wiped (re-pairing required, config
+      back to defaults).
+- [ ] Releasing BOOT before 10 seconds cancels it with no effect. Pressing
+      again while the 5-second window is still open still works.
+- [ ] Waiting out the 5-second window and *then* holding BOOT for 10s does
+      **nothing** — this is what stops a stuck button wiping a bike's
+      config mid-ride. Confirm it stays inert for the rest of the run.
+- [ ] Board calibration survives the reset (it describes the board, not the
+      owner — see `nvs_calib_hal.h`).
+- [ ] The confirmation blink does not trip the task watchdog: the pattern
+      takes ~1.4s on the watchdog-monitored app task and feeds it between
+      cycles. A reboot into a panic here is a bug, not a pass.
 
 ## 10. Watchdog / reboot / restore timing
 

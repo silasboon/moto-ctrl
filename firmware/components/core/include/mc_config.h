@@ -33,14 +33,28 @@
 #include "mc_input.h"
 #include "mc_output.h"
 
-#define MC_CONFIG_SCHEMA_VERSION 6
+#define MC_CONFIG_SCHEMA_VERSION 8
 
 typedef struct {
     uint16_t schema_version;
+    /* Board nickname (schema_version 8). Empty means the factory default —
+     * see MC_DEVICE_NAME_DEFAULT. Read it through
+     * mc_config_effective_device_name() rather than directly, so the
+     * empty-means-default rule lives in one place. */
+    char device_name[MC_DEVICE_NAME_MAX];
     mc_output_config_t outputs;
     mc_input_config_t inputs;
     mc_diag_config_t diagnostics; /* added at schema_version 2 */
 } mc_config_t;
+
+/* The name to advertise: the rider's, or MC_DEVICE_NAME_DEFAULT if unset.
+ * Never returns NULL or an empty string — a nameless BLE peripheral is
+ * undiscoverable in every phone UI. */
+static inline const char *mc_config_effective_device_name(const mc_config_t *cfg)
+{
+    return (cfg != NULL && cfg->device_name[0] != '\0') ? cfg->device_name
+                                                        : MC_DEVICE_NAME_DEFAULT;
+}
 
 typedef enum {
     MC_CONFIG_OK = 0,

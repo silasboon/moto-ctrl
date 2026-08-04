@@ -197,14 +197,17 @@ hardware:
   on real hardware, an OTA update that reports success may still get rolled
   back by the bootloader on its *second* reboot. See
   `docs/HARDWARE_TESTING.md` §11.
-- The physical factory-reset check (`factory_reset_check()`) reads GPIO0 as
-  a plain input at the very start of `app_main()` — which only runs at all
-  if the ROM didn't already sample GPIO0 low at the reset/strap instant and
-  enter UART download mode instead. Whether "hold BOOT, then apply power"
-  actually reaches `factory_reset_check()` on real hardware, versus needing
-  "apply power, then press BOOT," hasn't been verified against real
-  silicon. See `docs/FLASHING.md`'s callout and `docs/HARDWARE_TESTING.md`
-  §9.
+- The physical factory reset is now a 5-second arming window watched on the
+  app tick (`factory_reset_init()` / `factory_reset_tick()`), not a sample at
+  boot. The old single-sample version was unreachable by hand: holding BOOT
+  through reset enters UART download mode, because BOOT is GPIO0 and its
+  level at the strap instant selects the boot path, so `app_main()` never
+  ran; and releasing reset first left only a few hundred ms to press before
+  the sample had passed. The gesture is "apply power, then press and hold
+  BOOT" — see `firmware/main/factory_reset.h`, `docs/FLASHING.md`'s Factory
+  reset section, and `docs/HARDWARE_TESTING.md` §9. **Not yet exercised on
+  real silicon**, including the watchdog feed across the confirmation
+  blink.
 
 The generic `combos[]` chord/sequence mechanism dispatches its own
 `actions` list, orthogonal to the lock cheat-code and to the per-button

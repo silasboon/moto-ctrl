@@ -20,3 +20,9 @@ void gatt_svr_on_disconnect(uint16_t conn_handle);
  * session table and calls ble_gatts_notify_custom(), which is safe to invoke
  * from an application task. */
 void gatt_svr_push_input_event(uint8_t button, uint8_t press_type, bool action_suppressed);
+
+/* True while any authenticated session has asked for learn mode WITH action
+ * suppression (docs/PROTOCOL.md §14.1) — the app is capturing a cheat-code,
+ * and the buttons being pressed must not also fire whatever they are bound
+ * to. The caller skips its binding dispatch while this holds. */
+bool gatt_svr_input_actions_suppressed(void);

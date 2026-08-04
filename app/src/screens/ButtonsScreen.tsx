@@ -33,9 +33,11 @@ import {
   ACTION_LIST_MAX,
   ACTION_TURN_L_TOGGLE,
   ACTION_TURN_R_TOGGLE,
+  actionAlternateOutput,
   actionToggleOutput,
   behavioursForTrigger,
   outputChannelForAction,
+  outputChannelForAlternateAction,
   type ComboDef,
   type DeviceConfig,
   type OutputBehaviour,
@@ -48,7 +50,7 @@ import {
   Divider,
   EmptyState,
   Field,
-  Loading,
+  SkeletonScreen,
   Notice,
   NumberField,
   Screen,
@@ -92,7 +94,11 @@ function behaviourOfAction(
   config: DeviceConfig,
 ): OutputBehaviour | null {
   const ch = channelForAction(id, config);
-  return ch === null ? null : (config.outputs.channels[ch]?.behaviour ?? null);
+  const alt = outputChannelForAlternateAction(id);
+  const index = ch ?? alt;
+  return index === null
+    ? null
+    : (config.outputs.channels[index]?.behaviour ?? null);
 }
 
 /** Whether an action can sensibly be bound to a given trigger. Encodes the
@@ -118,11 +124,23 @@ function actionLabel(id: number, config: DeviceConfig): string {
   if (id === ACTION_TURN_R_TOGGLE) return 'Turn right';
   if (id === ACTION_HAZARD_TOGGLE) return 'Hazards';
   const ch = outputChannelForAction(id);
-  if (ch !== null) {
-    const name = config.outputs.channels[ch]?.name;
-    return name && name.trim() ? name : `Output ${ch + 1}`;
+  if (ch !== null) return channelName(ch, config);
+  /* A pair binding names both members, in the order a press visits them from
+   * cold, so "Low Beam / High Beam" tells the rider which one the first tap
+   * lights. */
+  const alt = outputChannelForAlternateAction(id);
+  if (alt !== null) {
+    const partner = config.outputs.channels[alt]?.alternate_channel ?? -1;
+    return partner >= 0
+      ? `${channelName(alt, config)} / ${channelName(partner, config)}`
+      : channelName(alt, config);
   }
   return `Action ${id}`;
+}
+
+function channelName(ch: number, config: DeviceConfig): string {
+  const name = config.outputs.channels[ch]?.name;
+  return name && name.trim() ? name : `Output ${ch + 1}`;
 }
 
 function buttonLabel(index: number, config: DeviceConfig | null): string {
@@ -280,7 +298,13 @@ export function ButtonsScreen({ client, onDone }: Props): React.JSX.Element {
   }, []);
 
   /* Every action a binding chip can offer: the three flasher-behaviour ones,
-   * then one per output channel. */
+   * one per output channel, then one per configured alternating pair.
+   *
+   * A pair contributes a single chip, keyed on its lower-numbered member,
+   * not one per member: from cold a press lights whichever channel it names,
+   * but after that the two are indistinguishable, so offering both would be
+   * two chips that do the same thing on every press but the first. Depends
+   * on config because pairs are configured on the Outputs screen. */
   const actionChoices = useMemo(() => {
     const ids = [
       ACTION_TURN_L_TOGGLE,
@@ -288,8 +312,11 @@ export function ButtonsScreen({ client, onDone }: Props): React.JSX.Element {
       ACTION_HAZARD_TOGGLE,
     ];
     for (let ch = 0; ch < OUTPUT_COUNT; ch++) ids.push(actionToggleOutput(ch));
+    config?.outputs.channels.forEach((c, ch) => {
+      if (c.alternate_channel > ch) ids.push(actionAlternateOutput(ch));
+    });
     return ids;
-  }, []);
+  }, [config]);
 
   /* Buttons that appear in a chord: their own single-press bindings are
    * suppressed by the firmware when the chord fires, and the rider should
@@ -332,7 +359,8 @@ export function ButtonsScreen({ client, onDone }: Props): React.JSX.Element {
     }
   }
 
-  if (loading) return <Loading label="Reading configuration…" />;
+  if (loading)
+    return <SkeletonScreen title="Buttons" onBack={back} cards={4} lines={1} />;
   if (!config) {
     return (
       <Screen title="Buttons" onBack={back}>

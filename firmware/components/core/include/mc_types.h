@@ -24,6 +24,17 @@
 #define MC_OUTPUT_COUNT 12
 #define MC_INPUT_COUNT 8
 
+/* Rider-chosen name for the board itself — a nickname or bike model, shown
+ * in the app's board list and advertised over BLE. Bounded by what fits a
+ * BLE scan response alongside its header (31 bytes total), not by taste.
+ *
+ * An empty device_name means "use MC_DEVICE_NAME_DEFAULT". Storing the
+ * default as an empty string rather than the literal keeps a board that was
+ * never renamed distinguishable from one deliberately renamed to
+ * "MOTO-CTRL", which is what lets an ownership transfer reset it. */
+#define MC_DEVICE_NAME_MAX 24
+#define MC_DEVICE_NAME_DEFAULT "MOTO-CTRL"
+
 #define MC_OUTPUT_NAME_MAX 24
 
 /* Rider-assigned button label, so the app can show "Left Bar, Top" instead
@@ -65,6 +76,18 @@
  * immobilizer, the starter engine-running/interlock guards (AGENTS.md #6)
  * and turn mutual exclusion — a binding can never bypass those. */
 #define MC_ACTION_OUTPUT_TOGGLE_BASE 0x100
+
+/* Alternating-pair binding: action id MC_ACTION_OUTPUT_ALTERNATE_BASE + N
+ * steps the pair channel N belongs to — whichever member is lit, light the
+ * other (mc_output_alternate_press()). One button, hi/lo beam, or two DRL
+ * colours.
+ *
+ * A second reserved range rather than a flag on the toggle range, for the
+ * same reason the toggle range is a range: it adds no config schema field
+ * and an older firmware simply won't match the id and will ignore the
+ * binding, instead of misreading it as "toggle channel N" and leaving both
+ * beams switchable off. */
+#define MC_ACTION_OUTPUT_ALTERNATE_BASE 0x200
 
 typedef uint16_t mc_action_id_t;
 

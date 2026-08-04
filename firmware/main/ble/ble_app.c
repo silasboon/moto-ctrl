@@ -14,9 +14,18 @@
 #include "gatt_svr.h"
 
 static const char *TAG = "mc_ble";
-#define MC_BLE_DEVICE_NAME "MOTO-CTRL"
 
 static uint8_t s_own_addr_type;
+/* The shared device state, kept so a rename can rebuild the advertisement
+ * from the current config without the caller passing it back in. */
+static mc_app_t *s_app;
+
+/* The rider's board name, or MOTO-CTRL if they never set one. */
+static const char *device_name(void)
+{
+    return (s_app != NULL) ? mc_config_effective_device_name(s_app->config)
+                           : MC_DEVICE_NAME_DEFAULT;
+}
 
 /* Provided by the NimBLE store-config component (NVS-backed bond storage). */
 void ble_store_config_init(void);
@@ -25,12 +34,23 @@ static int gap_event(struct ble_gap_event *event, void *arg);
 
 static void advertise(void)
 {
+    /* Primary payload: flags + the 128-bit status service UUID. The two
+     * together are 21 of the 31 available bytes.
+     *
+     * The UUID moved here from the scan response when boards became
+     * renameable, and the name moved the other way. A client cannot discover
+     * MOTO-CTRL boards by name any more — the name is now whatever the rider
+     * typed — so the service UUID is the only stable identifier, and it has
+     * to be in the primary advertisement for a scanner to filter on it
+     * reliably. The name, in turn, needs the room: 29 bytes in the scan
+     * response rather than the ~10 that were left beside a 128-bit UUID. */
+    static const ble_uuid128_t status_uuid = MC_UUID_SVC_STATUS;
     struct ble_hs_adv_fields fields;
     memset(&fields, 0, sizeof(fields));
     fields.flags = BLE_HS_ADV_F_DISC_GEN | BLE_HS_ADV_F_BREDR_UNSUP;
-    fields.name = (uint8_t *)MC_BLE_DEVICE_NAME;
-    fields.name_len = strlen(MC_BLE_DEVICE_NAME);
-    fields.name_is_complete = 1;
+    fields.uuids128 = (ble_uuid128_t *)&status_uuid;
+    fields.num_uuids128 = 1;
+    fields.uuids128_is_complete = 1;
 
     int rc = ble_gap_adv_set_fields(&fields);
     if (rc != 0) {
@@ -38,15 +58,16 @@ static void advertise(void)
         return;
     }
 
-    /* Advertise the primary (status) service UUID in the scan response — it
-     * doesn't fit alongside the name in the 31-byte adv payload. */
-    static const ble_uuid128_t status_uuid = MC_UUID_SVC_STATUS;
+    const char *name = device_name();
     struct ble_hs_adv_fields rsp_fields;
     memset(&rsp_fields, 0, sizeof(rsp_fields));
-    rsp_fields.uuids128 = (ble_uuid128_t *)&status_uuid;
-    rsp_fields.num_uuids128 = 1;
-    rsp_fields.uuids128_is_complete = 1;
-    ble_gap_adv_rsp_set_fields(&rsp_fields);
+    rsp_fields.name = (uint8_t *)name;
+    rsp_fields.name_len = (uint8_t)strlen(name);
+    rsp_fields.name_is_complete = 1;
+    rc = ble_gap_adv_rsp_set_fields(&rsp_fields);
+    if (rc != 0) {
+        ESP_LOGE(TAG, "adv_rsp_set_fields failed: %d", rc);
+    }
 
     struct ble_gap_adv_params adv_params;
     memset(&adv_params, 0, sizeof(adv_params));
@@ -131,6 +152,7 @@ static void host_task(void *param)
 
 void ble_app_start(mc_app_t *app)
 {
+    s_app = app;
     ESP_ERROR_CHECK(nimble_port_init());
 
     ble_hs_cfg.reset_cb = on_reset;
@@ -157,7 +179,7 @@ void ble_app_start(mc_app_t *app)
         return;
     }
 
-    rc = ble_svc_gap_device_name_set(MC_BLE_DEVICE_NAME);
+    rc = ble_svc_gap_device_name_set(device_name());
     if (rc != 0) {
         ESP_LOGE(TAG, "device_name_set failed: %d", rc);
     }
@@ -165,5 +187,29 @@ void ble_app_start(mc_app_t *app)
     ble_store_config_init();
 
     nimble_port_freertos_init(host_task);
-    ESP_LOGI(TAG, "NimBLE host started; advertising as %s", MC_BLE_DEVICE_NAME);
+    ESP_LOGI(TAG, "NimBLE host started; advertising as %s", device_name());
+}
+
+void ble_app_refresh_device_name(void)
+{
+    if (s_app == NULL) {
+        return;
+    }
+    const char *name = device_name();
+    int rc = ble_svc_gap_device_name_set(name);
+    if (rc != 0) {
+        ESP_LOGE(TAG, "device_name_set failed: %d", rc);
+    }
+
+    /* The name is baked into the scan-response payload, so a running
+     * advertisement keeps broadcasting the old one until it is rebuilt. Stop
+     * and restart rather than trying to patch it in place.
+     *
+     * While a phone is connected there is no advertisement to rebuild (this
+     * board advertises non-connectably only when idle), and ble_gap_adv_stop
+     * returns BLE_HS_EALREADY — harmless, and the next advertise() after
+     * disconnect picks the new name up. */
+    ble_gap_adv_stop();
+    advertise();
+    ESP_LOGI(TAG, "device name is now %s", name);
 }

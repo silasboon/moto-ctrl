@@ -7,15 +7,19 @@
 	<key>CFBundleDevelopmentRegion</key>
 	<string>en</string>
 	<key>CFBundleDisplayName</key>
-	<string>MotoCtrlNativeScratch</string>
+	<string>Moto Ctrl</string>
 	<key>CFBundleExecutable</key>
 	<string>$(EXECUTABLE_NAME)</string>
 	<key>CFBundleIdentifier</key>
 	<string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
 	<key>CFBundleInfoDictionaryVersion</key>
 	<string>6.0</string>
+	<!-- Set explicitly rather than left as $(PRODUCT_NAME): the Xcode target
+	     is still called MotoCtrl, and that name would otherwise
+	     surface wherever iOS falls back to CFBundleName (Settings, the
+	     storage list, permission prompts). -->
 	<key>CFBundleName</key>
-	<string>$(PRODUCT_NAME)</string>
+	<string>Moto Ctrl</string>
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
@@ -24,6 +28,26 @@
 	<string>????</string>
 	<key>CFBundleVersion</key>
 	<string>$(CURRENT_PROJECT_VERSION)</string>
+	<!-- US export-compliance declaration, answered here rather than in the
+	     App Store Connect dialog so TestFlight/CI uploads don't stop to ask
+	     on every build.
+
+	     Basis, as of this commit: the app implements no confidentiality
+	     cryptography at all. Its only crypto is Ed25519 (RFC 8032) for
+	     signing the board's challenge nonce — a digital signature, which
+	     conceals nothing — and SHA-512 (FIPS 180-4) to verify a downloaded
+	     firmware bundle. Actual encryption comes from the OS: HTTPS via
+	     NSURLSession for the two update requests (AGENTS.md's sole network
+	     exception), and BLE Secure Connections in the radio stack. Neither
+	     is implemented by this app.
+
+	     REVISIT THIS if app code ever encrypts anything for confidentiality
+	     — a stored or exported config, a payload — or if the phone-as-key
+	     handshake stops relying on BLE's own encryption and does its own.
+	     Either change makes this declaration wrong. It covers the iOS binary
+	     only; the firmware's cheat-code hashing is out of scope. -->
+	<key>ITSAppUsesNonExemptEncryption</key>
+	<false/>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
 	<key>NSAppTransportSecurity</key>

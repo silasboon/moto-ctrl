@@ -51,7 +51,8 @@ bool mc_status_serialize(const mc_status_t *st, uint8_t *buf, size_t buf_len)
     put_u16le(&buf[12], st->output_fault_mask);
     buf[14] = (uint8_t)st->rssi_dbm;
     buf[15] = (uint8_t)((st->cheatcode_backoff ? 0x01 : 0) |
-                        (st->lv_cutoff_active ? 0x02 : 0)); /* bits 0-1; bits 2-7 reserved */
+                        (st->lv_cutoff_active ? 0x02 : 0) |
+                        (st->hazard_active ? 0x04 : 0)); /* bits 0-2; bits 3-7 reserved */
     return true;
 }
 
@@ -71,5 +72,6 @@ bool mc_status_deserialize(const uint8_t *buf, size_t len, mc_status_t *out)
     out->rssi_dbm = (int8_t)buf[14];
     out->cheatcode_backoff = (buf[15] & 0x01) != 0;
     out->lv_cutoff_active = (buf[15] & 0x02) != 0;
+    out->hazard_active = (buf[15] & 0x04) != 0;
     return true;
 }

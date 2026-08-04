@@ -45,6 +45,14 @@ typedef struct {
     bool cheatcode_backoff;      /* wire byte 15 bit 0: cheat-code entry is in backoff */
     bool lv_cutoff_active;       /* wire byte 15 bit 1: low-voltage cutoff is suppressing
                                    * non-essential outputs — see mc_output_lv_cutoff_active(). */
+    /* Wire byte 15 bit 2: hazards are running. Deliberately its own bit
+     * rather than something a client derives from output_state_mask: hazard
+     * members BLINK, so that mask alternates several times a second and a
+     * client sampling it can never tell "hazards on" from "hazards off". A
+     * rider needs to know whether pressing the button will start or stop
+     * them, which is a question about intent, not about what is lit this
+     * instant. */
+    bool hazard_active;
 } mc_status_t;
 
 /* Fills `out` with firmware version + defaults (everything else zeroed,

@@ -191,6 +191,9 @@ char *mc_config_to_json(const mc_config_t *cfg)
     }
 
     cJSON_AddNumberToObject(root, "schema_version", cfg->schema_version);
+    /* schema_version 8. Emitted even when empty, so a client can tell "not
+     * renamed" from "this firmware predates naming". */
+    cJSON_AddStringToObject(root, "device_name", cfg->device_name);
 
     /* outputs */
     cJSON *outputs = cJSON_AddObjectToObject(root, "outputs");
@@ -208,6 +211,9 @@ char *mc_config_to_json(const mc_config_t *cfg)
         cJSON_AddBoolToObject(obj, "is_brake", ch->is_brake);
         cJSON_AddStringToObject(obj, "indicator", indicator_to_string(ch->indicator));
         cJSON_AddBoolToObject(obj, "hazard_member", ch->hazard_member);
+        /* schema_version 7 */
+        cJSON_AddBoolToObject(obj, "on_with_ignition", ch->on_with_ignition);
+        cJSON_AddNumberToObject(obj, "alternate_channel", ch->alternate_channel);
         cJSON_AddItemToArray(channels, obj);
     }
     cJSON_AddNumberToObject(outputs, "starter_interlock_input", cfg->outputs.starter_interlock_input);
@@ -351,6 +357,27 @@ static mc_config_result_t parse_outputs(const cJSON *outputs, mc_config_t *out)
             } else {
                 const cJSON *func = cJSON_GetObjectItemCaseSensitive(obj, "function");
                 apply_legacy_function(cJSON_IsString(func) ? func->valuestring : NULL, ch);
+            }
+
+            /* schema_version 7. Absent in every earlier document, and the
+             * defaults are exactly what those documents meant: nothing came
+             * on with the ignition, and no channel had a partner. So there
+             * is no migration to write — tolerant parse leaves the
+             * mc_output_config_default() values in place. */
+            const cJSON *owi = cJSON_GetObjectItemCaseSensitive(obj, "on_with_ignition");
+            if (cJSON_IsBool(owi)) {
+                ch->on_with_ignition = cJSON_IsTrue(owi);
+            }
+            const cJSON *alt = cJSON_GetObjectItemCaseSensitive(obj, "alternate_channel");
+            if (cJSON_IsNumber(alt)) {
+                int v = (int)alt->valuedouble;
+                /* Out-of-range is clamped to "no partner" rather than
+                 * carried through: mc_output_config_validate() would reject
+                 * the whole config, and a stray index is far more likely to
+                 * be a hand-edited or truncated document than a real
+                 * intent. Asymmetric links still get rejected there. */
+                ch->alternate_channel =
+                    (v >= 0 && v < MC_OUTPUT_COUNT && v != i) ? (int8_t)v : (int8_t)-1;
             }
         }
     }
@@ -521,6 +548,18 @@ mc_config_result_t mc_config_from_json(const char *json, size_t len, mc_config_t
      * of any "schema_version" in the JSON (JSON is an interchange format,
      * not a stored binary layout to migrate). */
     mc_config_default(out);
+
+    /* schema_version 8. Absent in every earlier document, and the default
+     * (empty, i.e. MC_DEVICE_NAME_DEFAULT) is exactly what those documents
+     * meant — so, like v7, this needed no migration pass. Truncated rather
+     * than rejected if oversized, matching how channel and button names are
+     * handled: a too-long name is a cosmetic problem, not a reason to refuse
+     * a whole config. */
+    const cJSON *dev_name = cJSON_GetObjectItemCaseSensitive(root, "device_name");
+    if (cJSON_IsString(dev_name) && dev_name->valuestring != NULL) {
+        strncpy(out->device_name, dev_name->valuestring, MC_DEVICE_NAME_MAX - 1);
+        out->device_name[MC_DEVICE_NAME_MAX - 1] = '\0';
+    }
 
     mc_config_result_t res = parse_outputs(cJSON_GetObjectItemCaseSensitive(root, "outputs"), out);
     if (res == MC_CONFIG_OK) {

@@ -279,13 +279,21 @@ describe('MotoClient', () => {
     expect(result.ok).toBe(true);
   });
 
-  test('inputLearn sends the enable byte and reports the device result', async () => {
+  /* Two bytes since the cheat-code capture landed: enable, then whether the
+   * device should also stop running the bindings for the presses it reports
+   * (docs/PROTOCOL.md §14.1). Suppression defaults OFF, so identify-a-button
+   * keeps behaving as it always did. */
+  test.each<[string, boolean, boolean | undefined, number[]]>([
+    ['enable only', true, undefined, [1, 0]],
+    ['enable with suppression', true, true, [1, 1]],
+    ['disable', false, undefined, [0, 0]],
+  ])('inputLearn sends %s', async (_name, enable, suppress, expected) => {
     const transport = new ScriptedTransport();
     transport.responder = (channel, opcode, body, emit) => {
       if (channel === MC_CH.STATUS && opcode === MC_OP.STATUS_GET) {
         emit(frame(MC_OP.STATUS, statusBytes()));
       } else if (channel === MC_CH.COMMAND && opcode === MC_OP.INPUT_LEARN) {
-        expect(Array.from(body)).toEqual([1]);
+        expect(Array.from(body)).toEqual(expected);
         emit(
           frame(
             MC_OP.COMMAND_RESULT,
@@ -297,7 +305,10 @@ describe('MotoClient', () => {
     const client = new MotoClient(transport);
     activeClients.push(client);
     await client.connect('fake');
-    const result = await client.inputLearn(true);
+    const result =
+      suppress === undefined
+        ? await client.inputLearn(enable)
+        : await client.inputLearn(enable, suppress);
     expect(result.ok).toBe(true);
   });
 

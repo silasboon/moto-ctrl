@@ -25,6 +25,28 @@ PODS:
   - hermes-engine (250829098.0.14):
     - hermes-engine/Pre-built (= 250829098.0.14)
   - hermes-engine/Pre-built (250829098.0.14)
+  - LiquidGlass (0.8.0):
+    - hermes-engine
+    - RCTRequired
+    - RCTTypeSafety
+    - React-Core
+    - React-Core-prebuilt
+    - React-debug
+    - React-Fabric
+    - React-featureflags
+    - React-graphics
+    - React-ImageManager
+    - React-jsi
+    - React-NativeModulesApple
+    - React-RCTFabric
+    - React-renderercss
+    - React-rendererdebug
+    - React-utils
+    - ReactCodegen
+    - ReactCommon/turbomodule/bridging
+    - ReactCommon/turbomodule/core
+    - ReactNativeDependencies
+    - Yoga
   - MultiplatformBleAdapter (0.2.0)
   - RCTDeprecation (0.86.0)
   - RCTRequired (0.86.0)
@@ -1966,6 +1988,7 @@ DEPENDENCIES:
   - "AsyncStorage (from `../node_modules/@react-native-async-storage/async-storage`)"
   - FBLazyVector (from `../node_modules/react-native/Libraries/FBLazyVector`)
   - hermes-engine (from `../node_modules/react-native/sdks/hermes-engine/hermes-engine.podspec`)
+  - "LiquidGlass (from `../node_modules/@callstack/liquid-glass`)"
   - RCTDeprecation (from `../node_modules/react-native/ReactApple/Libraries/RCTFoundation/RCTDeprecation`)
   - RCTRequired (from `../node_modules/react-native/Libraries/Required`)
   - RCTSwiftUI (from `../node_modules/react-native/ReactApple/RCTSwiftUI`)
@@ -2056,6 +2079,8 @@ EXTERNAL SOURCES:
   hermes-engine:
     :podspec: "../node_modules/react-native/sdks/hermes-engine/hermes-engine.podspec"
     :tag: hermes-v250829098.0.14
+  LiquidGlass:
+    :path: "../node_modules/@callstack/liquid-glass"
   RCTDeprecation:
     :path: "../node_modules/react-native/ReactApple/Libraries/RCTFoundation/RCTDeprecation"
   RCTRequired:
@@ -2213,6 +2238,7 @@ SPEC CHECKSUMS:
   AsyncStorage: dba9d05b9aa34413760ea5a74f63a7e7f9fddf73
   FBLazyVector: b3e7ad108f0d882e30445c5527d774e3fd432f3d
   hermes-engine: 5950de6d80b1719b746024069a0cdf144ac721b3
+  LiquidGlass: d2985bf447536bac9faf652ed793672bc4202894
   MultiplatformBleAdapter: b1fddd0d499b96b607e00f0faa8e60648343dc1d
   RCTDeprecation: 2a74a2c57675e64419bd89078efde81f7c1de90b
   RCTRequired: 30451112e6fef4e6f31b4e7eee0845156e35e4b0
@@ -2291,6 +2317,6 @@ SPEC CHECKSUMS:
   ReactNativeDependencies: fa0a54b3f5319ae0e3b9aff32bfee7a424b88e66
   Yoga: 94172d87dd5d83fc929bf1ee53121b5d4490b5f2
 
-PODFILE CHECKSUM: 3f5ff74e45f4a0936d2d0fcd1b5fb5f0257cee3f
+PODFILE CHECKSUM: 2f051b8199aaebb9c0101ac3d5ebc623e2f004d9
 
 COCOAPODS: 1.16.2

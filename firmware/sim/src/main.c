@@ -215,8 +215,17 @@ static bool channel_is_momentary(uint8_t ch)
            g_config.outputs.channels[ch].behaviour == MC_OUT_BEHAVIOUR_MOMENTARY;
 }
 
+/* Mirrors gatt_svr_input_actions_suppressed(): an app capturing a cheat-code
+ * asks for its presses not to fire bindings. Declared here, defined below the
+ * session pointer it reads. */
+static bool input_actions_suppressed(void);
+
 static void momentary_tick(void)
 {
+    /* Level-driven, so skipping press dispatch isn't enough to keep these
+     * quiet during a cheat-code capture — see firmware/main/main.c. */
+    bool suppressed = input_actions_suppressed();
+
     for (uint8_t ch = 0; ch < MC_OUTPUT_COUNT; ch++) {
         if (g_config.outputs.channels[ch].behaviour != MC_OUT_BEHAVIOUR_MOMENTARY) {
             continue;
@@ -225,14 +234,14 @@ static void momentary_tick(void)
          * tap binds to toggle/blink instead, so waiting for the hold
          * threshold keeps a tap from blipping the output. */
         bool held = false;
-        for (uint8_t b = 0; b < MC_INPUT_COUNT && !held; b++) {
+        for (uint8_t b = 0; b < MC_INPUT_COUNT && !held && !suppressed; b++) {
             if (binding_targets_channel(&g_config.inputs.long_press_actions[b], ch) &&
                 mc_input_hold_active(&g_input, b)) {
                 held = true;
             }
         }
         /* ...or a chord that is still being held down. */
-        for (uint8_t i = 0; i < g_config.inputs.combo_count && !held; i++) {
+        for (uint8_t i = 0; i < g_config.inputs.combo_count && !held && !suppressed; i++) {
             if (g_config.inputs.combos[i].type == MC_COMBO_CHORD &&
                 binding_targets_channel(&g_config.inputs.combos[i].actions, ch) &&
                 mc_input_chord_held(&g_input, i)) {
@@ -262,6 +271,18 @@ static bool dispatch_action(mc_action_id_t action, uint32_t t)
             return true; /* momentary_tick() owns it */
         }
         mc_output_set(&g_output, ch, !mc_output_get_state(&g_output, ch), MC_OUT_SRC_LOCAL);
+        return true;
+    }
+
+    if (action >= MC_ACTION_OUTPUT_ALTERNATE_BASE &&
+        action < MC_ACTION_OUTPUT_ALTERNATE_BASE + MC_OUTPUT_COUNT) {
+        uint8_t ch = (uint8_t)(action - MC_ACTION_OUTPUT_ALTERNATE_BASE);
+        int8_t partner = g_config.outputs.channels[ch].alternate_channel;
+        if (channel_is_momentary(ch) ||
+            (partner >= 0 && partner < MC_OUTPUT_COUNT && channel_is_momentary((uint8_t)partner))) {
+            return true; /* momentary_tick() owns it */
+        }
+        mc_output_alternate_press(&g_output, ch, MC_OUT_SRC_LOCAL);
         return true;
     }
 
@@ -398,6 +419,12 @@ static void push_status_tick(void)
  * gatt_svr_push_input_event() iterating the real session table. ws_server
  * only ever has one connection at a time (ws_server.h). */
 static mc_session_t *g_active_session;
+
+static bool input_actions_suppressed(void)
+{
+    const mc_session_t *s = g_active_session;
+    return s != NULL && s->input_learn_suppress_actions && mc_session_is_authed(s);
+}
 
 /* Mirrors gatt_svr_push_input_event(). A no-op unless an authenticated
  * client asked for learn mode. */
@@ -557,7 +584,8 @@ static void *ticker_thread(void *arg)
                 /* action_suppressed: a chord containing this button already
                  * fired. The cheat-code feed above ignores it (AGENTS.md
                  * #3); only action dispatch honours it. */
-                if (!evt.data.press.action_suppressed) {
+                if (!evt.data.press.action_suppressed &&
+                    !input_actions_suppressed()) {
                     dispatch_action_list(actions_for_press(evt.data.press.button, evt.data.press.type), t);
                 }
             } else {

@@ -120,6 +120,12 @@ typedef enum {
     MC_OUT_CFG_BAD_PWM_DUTY = 1u << 2,
     /* turn_flash_period_ms == 0 — it's a divisor in the blink-phase calc. */
     MC_OUT_CFG_BAD_TURN_PERIOD = 1u << 3,
+    /* Some channel's alternate_channel is out of range, points at itself,
+     * or isn't reciprocated by its partner. */
+    MC_OUT_CFG_BAD_ALTERNATE = 1u << 4,
+    /* Both members of an alternating pair are flagged on_with_ignition —
+     * they would fight over which one the ignition lights. */
+    MC_OUT_CFG_ALTERNATE_BOTH_IGNITION = 1u << 5,
 } mc_output_config_flags_t;
 
 /* Flasher/PWM defaults — see mc_output_config_default(). */
@@ -174,6 +180,42 @@ typedef struct {
      * flashing during a hazard stop. Membership alone grants no
      * mutual-exclusion or auto-cancel behaviour; only `indicator` does. */
     bool hazard_member;
+
+    /* --- schema_version 7 --- */
+
+    /* Comes on with the ignition: what a key turned to "on" does on a stock
+     * bike. DRLs, running lights, an instrument cluster.
+     *
+     * This flag is about switching ON only. Switching the ignition OFF puts
+     * EVERY channel out regardless of this flag (see apply_ignition_off()) —
+     * a key that killed only the channels it had lit, and left whatever the
+     * rider had switched on by hand still burning, would not be a key.
+     *
+     * Edge-triggered, never held (see apply_ignition_on()). The rider can
+     * still switch a companion off mid-ride and it stays off until the next
+     * ignition cycle — a held assertion would mean a DRL could not be turned
+     * off without killing the ignition, which is worse than the problem it
+     * solves. Restoring persisted state at boot is not an edge and
+     * deliberately does not fire either path, keeping
+     * mc_output_restore_from_config() a faithful replay of what was last
+     * commanded (AGENTS.md #1). */
+    bool on_with_ignition;
+
+    /* Channel this one alternates with — hi/lo beam, two DRL colours — or
+     * -1 for none. Symmetric: if A names B, B must name A, and
+     * mc_output_config_validate() rejects a config where it isn't, because
+     * a one-way link means switching one channel on cancels the other but
+     * not the reverse, which is worse than no link at all.
+     *
+     * Turning either member on forces the other off, wherever the command
+     * came from (app, button, brake pass-through) — the same shape as turn
+     * mutual exclusion, and for the same reason: an invariant enforced in
+     * mc_output_set() cannot be bypassed by adding a new caller.
+     *
+     * A pair is at-most-one-on, NOT exactly-one-on: a direct command may
+     * still turn both off, so a rider can black out an aux pair from the
+     * app. It is mc_output_alternate_press() that never lands on off. */
+    int8_t alternate_channel;
 } mc_output_channel_config_t;
 
 typedef struct {
@@ -246,6 +288,17 @@ typedef struct {
      * Cleared by the next hazard press, or by any explicit mc_output_set() on
      * a member. */
     bool hazard_active;
+    /* Each hazard_member's commanded_on at the instant the hazards were
+     * switched on — bit c for channel c. Ending the hazards puts every member
+     * back to this rather than to off.
+     *
+     * Hazards borrow the group; they don't own it. A DRL that was lit before
+     * the hazards started is still wanted after they stop — the rider asked
+     * for the hazards to end, not for their running light to go out.
+     * Restoring is also what makes signalling a turn out of a hazard stop
+     * behave: the far indicator returns to off instead of staying latched on
+     * and blinking, which looked like the hazards had never stopped. */
+    uint16_t hazard_saved_mask;
 } mc_output_engine_t;
 
 void mc_output_init(mc_output_engine_t *eng, const mc_output_config_t *config, mc_output_hal_t hal);
@@ -284,6 +337,28 @@ bool mc_output_get_actual_state(const mc_output_engine_t *eng, uint8_t channel, 
  * the battery flat). No-op if neither a TURN_L nor a TURN_R channel is
  * configured. */
 void mc_output_hazard_press(mc_output_engine_t *eng, uint32_t now_ms);
+
+/* Whether hazards are currently running. Reported on the status wire (byte
+ * 15 bit 2) because it cannot be inferred from output_state_mask — hazard
+ * members blink, so that mask alternates and a client sampling it can't tell
+ * running hazards from stopped ones. */
+static inline bool mc_output_hazard_active(const mc_output_engine_t *eng)
+{
+    return eng->hazard_active;
+}
+
+/* Steps an alternating pair (see alternate_channel): whichever member is
+ * lit, light the other. If neither is on, lights `channel`.
+ *
+ * Never lands on "both off" — a headlight pair must not be switchable dark
+ * by a mistimed tap at night. Turning a pair off entirely is still possible,
+ * just not through this: it takes a direct mc_output_set(..., false), i.e.
+ * the app or a binding aimed at the channel itself.
+ *
+ * Returns MC_OUT_ERR_BAD_CHANNEL if `channel` has no partner configured. All
+ * the usual guards still apply, since this goes through mc_output_set(). */
+mc_output_result_t mc_output_alternate_press(mc_output_engine_t *eng, uint8_t channel,
+                                             mc_output_source_t source);
 
 /* Call every ~10ms, alongside mc_input_poll()/mc_diag_tick()/mc_lock_tick()
  * (before mc_diag_tick(), so its mc_output_get_actual_state() calls this

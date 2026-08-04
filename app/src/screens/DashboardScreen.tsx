@@ -10,80 +10,37 @@
  * is actually in a state that can be locked.
  */
 import React, { useEffect, useState } from 'react';
-import { Pressable, StyleSheet, Switch, Text, View } from 'react-native';
+import { StyleSheet, Text, View } from 'react-native';
 
-import { LOCK_STATE, MC_LOCK_STATE, OUTPUT_COUNT } from '../protocol/constants';
+import { LOCK_METHOD, LOCK_STATE, MC_LOCK_STATE } from '../protocol/constants';
 import type { MotoClient } from '../protocol/MotoClient';
-import { isOutputOn, type DeviceConfig, type Status } from '../protocol/types';
 import {
-  Badge,
-  Button,
-  Card,
-  Divider,
-  Notice,
-  Screen,
-  SectionHeader,
-  Stat,
-} from '../ui/components';
+  isOutputOn,
+  type DeviceConfig,
+  type LockConfig,
+  type Status,
+} from '../protocol/types';
+import { Button, Notice, Screen } from '../ui/components';
 import { colors, radius, space, type } from '../ui/theme';
 
 interface Props {
   client: MotoClient;
   deviceName: string;
-  onOpenOutputs: () => void;
-  onOpenButtons: () => void;
-  onOpenKeys: () => void;
-  onOpenLock: () => void;
-  onOpenDiagnostics: () => void;
-  onOpenFirmwareUpdate: () => void;
-  onOpenEventLog: () => void;
   onDisconnect: () => void;
-}
-
-/** Navigation tile. Two per row, so labels stay readable at any font size. */
-function NavTile({
-  label,
-  detail,
-  onPress,
-}: {
-  label: string;
-  detail: string;
-  onPress: () => void;
-}): React.JSX.Element {
-  return (
-    <Pressable
-      onPress={onPress}
-      accessibilityRole="button"
-      accessibilityLabel={`${label}. ${detail}`}
-      style={({ pressed }) => [
-        styles.navTile,
-        pressed && styles.navTilePressed,
-      ]}
-    >
-      <Text style={styles.navLabel}>{label}</Text>
-      <Text style={type.caption} numberOfLines={2}>
-        {detail}
-      </Text>
-    </Pressable>
-  );
 }
 
 export function DashboardScreen({
   client,
   deviceName,
-  onOpenOutputs,
-  onOpenButtons,
-  onOpenKeys,
-  onOpenLock,
-  onOpenDiagnostics,
-  onOpenFirmwareUpdate,
-  onOpenEventLog,
   onDisconnect,
 }: Props): React.JSX.Element {
   const [status, setStatus] = useState<Status | null>(client.getLastStatus());
   const [config, setConfig] = useState<DeviceConfig | null>(null);
-  const [configError, setConfigError] = useState<string | null>(null);
-  const [pending, setPending] = useState<Set<number>>(new Set());
+  /* Whether an immobilizer exists at all can't be read off the status wire:
+   * mc_lock_wire_state() reports DISABLED as UNLOCKED, so "no immobilizer
+   * configured" and "unlocked" are the same byte. The lock config is the only
+   * place that distinguishes them. */
+  const [lockConfig, setLockConfig] = useState<LockConfig | null>(null);
   const [lockActionBusy, setLockActionBusy] = useState(false);
   const [lockActionError, setLockActionError] = useState<string | null>(null);
   const [hazardBusy, setHazardBusy] = useState(false);
@@ -91,35 +48,32 @@ export function DashboardScreen({
 
   useEffect(() => {
     const unsub = client.onStatus(setStatus);
+    /* Only the board name and the hazard-group check need this now that the
+     * channel rows have moved to Setup → Outputs. */
     client
       .configRead()
       .then(setConfig)
-      .catch((err: unknown) =>
-        setConfigError(err instanceof Error ? err.message : String(err)),
-      );
+      .catch(() => {});
+    /* Best-effort: a board that can't answer simply shows no lock card
+     * rather than blocking the screen a rider opened to see live state. */
+    client
+      .lockGetConfig()
+      .then(setLockConfig)
+      .catch(() => {});
     return unsub;
   }, [client]);
-
-  async function toggle(channel: number, on: boolean): Promise<void> {
-    setPending(prev => new Set(prev).add(channel));
-    try {
-      await client.setOutput(channel, on);
-    } catch {
-      // The status poll reflects true device state regardless of this failing.
-    } finally {
-      setPending(prev => {
-        const next = new Set(prev);
-        next.delete(channel);
-        return next;
-      });
-    }
-  }
 
   const lockLabel = status
     ? (MC_LOCK_STATE[status.lockState as 0 | 1 | 2 | 3] ?? 'UNKNOWN')
     : '—';
   const isLocked = status?.lockState === LOCK_STATE.LOCKED;
   const hasHazardGroup = !!config?.outputs.channels.some(c => c.hazard_member);
+  /* Comes from its own status bit, not from outputStateMask: hazard members
+   * blink, so the mask alternates several times a second and can't answer
+   * "are the hazards on". Without this the button was unlabelled state — a
+   * rider pressing it had no way to tell whether they were starting or
+   * stopping them. */
+  const hazardsOn = !!status?.hazardActive;
   const authed = client.isAuthenticated();
 
   async function hazardPress(): Promise<void> {
@@ -140,10 +94,32 @@ export function DashboardScreen({
     setLockActionBusy(true);
     setLockActionError(null);
     try {
-      const result = isLocked ? await client.unlock() : await client.lock();
+      if (isLocked) {
+        const result = await client.unlock();
+        if (!result.ok)
+          setLockActionError(`Unlock rejected: ${result.resultName}`);
+        return;
+      }
+
+      /* Turn the key off before locking. mc_lock_request_lock() refuses
+       * while the ignition output is live (AGENTS.md #2), and unlocking
+       * deliberately switched it on — so without this, a bike unlocked from
+       * the app could never be locked again from the app. Doing it here
+       * rather than relaxing the firmware guard keeps the invariant exactly
+       * as written: at the moment LOCKED is entered, the ignition is off. */
+      if (
+        ignitionChannel >= 0 &&
+        status &&
+        isOutputOn(status, ignitionChannel)
+      ) {
+        await client.setOutput(ignitionChannel, false);
+      }
+      const result = await client.lock();
       if (!result.ok)
         setLockActionError(
-          `${isLocked ? 'Unlock' : 'Lock'} rejected: ${result.resultName}`,
+          result.resultName === 'REJECTED'
+            ? "Can't lock while the engine is running. Switch it off and try again."
+            : `Lock rejected: ${result.resultName}`,
         );
     } catch (err) {
       setLockActionError(err instanceof Error ? err.message : String(err));
@@ -152,43 +128,63 @@ export function DashboardScreen({
     }
   }
 
-  const showLockAction =
-    status &&
-    (status.lockState === LOCK_STATE.LOCKED ||
-      status.lockState === LOCK_STATE.PARKED);
+  /* The immobilizer is the thing a rider comes to this screen for, so the
+   * control is always present once one is configured — not only in the two
+   * states it used to appear in, which meant walking up to a bike and finding
+   * no lock button because it hadn't finished parking yet.
+   *
+   * DISABLED is the one state with nothing to offer: no immobilizer is
+   * configured, so there is nothing to lock. */
+  const hasImmobilizer = lockConfig?.immobilizerEnabled === true;
+  /* Unlocking from the app only works when phone-as-key is a configured
+   * method — mc_lock_request_unlock() returns UNAUTHORIZED otherwise. With it
+   * off, this bike is deliberately one you get into with the cheat-code or
+   * the ignition switch, so an Unlock button would be a control that cannot
+   * work.
+   *
+   * Locking is NOT gated the same way (mc_lock_request_lock has no method
+   * check): securing a bike you are already authenticated to is never the
+   * risky direction, so that button stays regardless. */
+  const phoneKeyEnabled =
+    lockConfig !== null && (lockConfig.methodsMask & LOCK_METHOD.PHONE) !== 0;
+  const canUnlockFromApp = hasImmobilizer && phoneKeyEnabled;
+
+  /* What to tell a rider who has no app unlock button. */
+  const otherWayIn = ((): string => {
+    const ways: string[] = [];
+    if (lockConfig?.cheatcodeSet) {
+      ways.push('enter your cheat-code on the handlebar buttons');
+    }
+    if (
+      lockConfig !== null &&
+      (lockConfig.methodsMask & LOCK_METHOD.IGNITION_SWITCH) !== 0 &&
+      lockConfig.ignitionSwitchInput >= 0
+    ) {
+      ways.push('turn the ignition switch');
+    }
+    return ways.length === 0
+      ? 'Phone unlock is off and no other method is configured — check Security.'
+      : `Phone unlock is off for this bike: ${ways.join(', or ')}.`;
+  })();
+  /* Locking is refused by the firmware while the engine runs or the ignition
+   * is live (AGENTS.md #2) — say so in advance rather than offering a button
+   * that returns REJECTED. */
+  /* The ignition channel, so locking can switch it off first — see
+   * quickLockToggle(). -1 when the config hasn't arrived or none is set. */
+  const ignitionChannel =
+    config?.outputs.channels.findIndex(c => c.is_ignition) ?? -1;
 
   return (
     <Screen
-      title={deviceName}
+      /* Prefer the name the board itself reports over the one the scan
+       * saw: a rename lands in the config immediately, while the advertised
+       * name a phone has cached can lag until the next discovery. */
+      title={config?.device_name?.trim() || deviceName}
       trailing={
         <Button label="Disconnect" tone="ghost" onPress={onDisconnect} />
       }
+      scroll={false}
     >
-      <View style={styles.statGrid}>
-        <Stat
-          label="Lock"
-          value={lockLabel}
-          tone={isLocked ? 'warn' : undefined}
-        />
-        <Stat
-          label="Battery"
-          value={status ? `${(status.batteryMv / 1000).toFixed(2)} V` : '—'}
-          tone={status?.lvCutoffActive ? 'danger' : undefined}
-        />
-        <Stat
-          label="Uptime"
-          value={status ? formatUptime(status.uptimeMs) : '—'}
-        />
-        <Stat
-          label="Firmware"
-          value={
-            status
-              ? `${status.fwMajor}.${status.fwMinor}.${status.fwPatch}`
-              : '—'
-          }
-        />
-      </View>
-
       {!authed && (
         <Notice tone="warn">
           Not authenticated — control is unavailable until this phone's key is
@@ -212,155 +208,114 @@ export function DashboardScreen({
           work.
         </Notice>
       )}
-
-      {(showLockAction || hasHazardGroup) && (
-        <View style={styles.actionRow}>
-          {showLockAction && (
-            <Button
-              style={styles.actionButton}
-              label={
-                lockActionBusy ? 'Working' : isLocked ? 'Unlock' : 'Lock now'
-              }
-              tone={isLocked ? 'primary' : 'secondary'}
-              busy={lockActionBusy}
-              disabled={!authed}
-              onPress={quickLockToggle}
-            />
-          )}
-          {hasHazardGroup && (
-            <Button
-              style={styles.actionButton}
-              label={hazardBusy ? 'Working' : 'Hazards'}
-              tone="danger"
-              busy={hazardBusy}
-              disabled={!authed}
-              onPress={hazardPress}
-            />
-          )}
-        </View>
-      )}
       {lockActionError && <Notice tone="danger">{lockActionError}</Notice>}
       {hazardError && <Notice tone="danger">{hazardError}</Notice>}
 
-      <SectionHeader>Setup</SectionHeader>
-      <View style={styles.navGrid}>
-        <NavTile
-          label="Outputs"
-          detail="Name channels, assign functions and modes"
-          onPress={onOpenOutputs}
-        />
-        <NavTile
-          label="Buttons"
-          detail="Identify switches and bind them to outputs"
-          onPress={onOpenButtons}
-        />
-        <NavTile
-          label="Immobilizer"
-          detail="Phone key, cheat-code, ignition switch"
-          onPress={onOpenLock}
-        />
-        <NavTile
-          label="Paired keys"
-          detail="Enrolled phones, revoke, transfer"
-          onPress={onOpenKeys}
-        />
-        <NavTile
-          label="Diagnostics"
-          detail="Per-channel current, faults, calibration"
-          onPress={onOpenDiagnostics}
-        />
-        <NavTile
-          label="Firmware"
-          detail="Check for and install updates"
-          onPress={onOpenFirmwareUpdate}
-        />
-        <NavTile
-          label="Event log"
-          detail="Lock, key and OTA history"
-          onPress={onOpenEventLog}
-        />
+      {/* The lock state takes the room, because it is the one thing worth
+       * reading from arm's length while pulling gloves on. */}
+      <View style={styles.hero}>
+        <Text style={styles.heroLabel}>
+          {hasImmobilizer ? 'Immobilizer' : 'Immobilizer off'}
+        </Text>
+        <Text
+          style={[styles.heroState, isLocked && styles.heroStateLocked]}
+          numberOfLines={1}
+          adjustsFontSizeToFit
+        >
+          {hasImmobilizer ? lockLabel : 'NOT SET UP'}
+        </Text>
+        <Text style={styles.heroDetail}>
+          {!hasImmobilizer
+            ? 'Set one up under Security to lock this bike from your phone.'
+            : isLocked
+              ? canUnlockFromApp
+                ? 'Nothing switches on until you unlock. Unlocking turns the ignition on, ready to start.'
+                : otherWayIn
+              : 'Locking switches the ignition off, cuts every output, and blocks the starter.'}
+        </Text>
       </View>
 
-      <SectionHeader>Outputs</SectionHeader>
-      {configError && (
-        <Notice tone="warn">{`Configuration unavailable: ${configError}`}</Notice>
+      {hasImmobilizer && (!isLocked || canUnlockFromApp) && (
+        <Button
+          size="large"
+          label={lockActionBusy ? 'Working' : isLocked ? 'UNLOCK' : 'LOCK'}
+          tone={isLocked ? 'primary' : 'secondary'}
+          busy={lockActionBusy}
+          disabled={!authed}
+          onPress={quickLockToggle}
+        />
       )}
-      <Card padded={false}>
-        {Array.from({ length: OUTPUT_COUNT }).map((_, ch) => {
-          const chCfg = config?.outputs.channels[ch];
-          const isStarter = chCfg?.is_starter === true;
-          const on = status ? isOutputOn(status, ch) : false;
-          const faulted = status
-            ? (status.outputFaultMask & (1 << ch)) !== 0
-            : false;
-          return (
-            <View key={ch}>
-              {ch > 0 && <Divider />}
-              <View style={styles.channelRow}>
-                <View style={styles.channelPip}>
-                  <Text style={styles.channelPipText}>{ch + 1}</Text>
-                </View>
-                <View style={styles.channelInfo}>
-                  <Text style={styles.channelName} numberOfLines={1}>
-                    {chCfg?.name?.trim() || `Output ${ch + 1}`}
-                  </Text>
-                  <View style={styles.channelMetaRow}>
-                    <Text style={type.caption}>{chCfg?.behaviour ?? '—'}</Text>
-                    {faulted && <Badge label="FAULT" tone="danger" />}
-                    {isStarter && <Badge label="BUTTON ONLY" tone="neutral" />}
-                  </View>
-                </View>
-                <Switch
-                  value={on}
-                  disabled={isStarter || pending.has(ch) || !authed}
-                  onValueChange={v => toggle(ch, v)}
-                  trackColor={{ false: colors.borderStrong, true: colors.on }}
-                  thumbColor={colors.text}
-                  ios_backgroundColor={colors.borderStrong}
-                  accessibilityLabel={`${chCfg?.name?.trim() || `Output ${ch + 1}`}, ${on ? 'on' : 'off'}`}
-                />
-              </View>
-            </View>
-          );
-        })}
-      </Card>
+
+      {hasHazardGroup && (
+        <Button
+          size="large"
+          label={hazardBusy ? 'Working' : hazardsOn ? 'HAZARDS OFF' : 'HAZARDS'}
+          /* Filled while running, outlined while not, so the state reads at a
+           * glance and not only from the text. Never disabled by the lock:
+           * hazards are the one control a locked bike keeps. */
+          tone={hazardsOn ? 'danger' : 'secondary'}
+          busy={hazardBusy}
+          disabled={!authed}
+          onPress={hazardPress}
+        />
+      )}
+
+      <View style={styles.batteryRow}>
+        <Text style={styles.batteryLabel}>Battery</Text>
+        <Text
+          style={[
+            styles.batteryValue,
+            status?.lvCutoffActive && styles.batteryLow,
+          ]}
+        >
+          {status ? `${(status.batteryMv / 1000).toFixed(2)}` : '—'}
+          <Text style={styles.batteryUnit}> V</Text>
+        </Text>
+      </View>
     </Screen>
   );
 }
 
-/** Uptime as something a human reads at a glance, not raw seconds. */
-function formatUptime(ms: number): string {
-  const total = Math.floor(ms / 1000);
-  const h = Math.floor(total / 3600);
-  const m = Math.floor((total % 3600) / 60);
-  const s = total % 60;
-  if (h > 0) return `${h}h ${m}m`;
-  if (m > 0) return `${m}m ${s}s`;
-  return `${s}s`;
-}
-
 const styles = StyleSheet.create({
+  /* Takes whatever vertical room is going, so the lock state is the thing
+   * the eye lands on. */
+  hero: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    gap: space.sm,
+    paddingHorizontal: space.md,
+  },
+  heroLabel: { ...type.overline },
+  heroState: {
+    fontSize: 56,
+    lineHeight: 64,
+    fontWeight: '800',
+    letterSpacing: -1.5,
+    color: colors.on,
+  },
+  heroStateLocked: { color: colors.warn },
+  heroDetail: { ...type.caption, textAlign: 'center', maxWidth: 320 },
+
+  batteryRow: {
+    flexDirection: 'row',
+    alignItems: 'baseline',
+    justifyContent: 'space-between',
+    backgroundColor: colors.raised,
+    borderRadius: radius.lg,
+    borderWidth: 1,
+    borderColor: colors.border,
+    paddingHorizontal: space.lg,
+    paddingVertical: space.md,
+  },
+  batteryLabel: { ...type.overline },
+  batteryValue: { ...type.value, fontSize: 30, fontWeight: '700' },
+  batteryUnit: { fontSize: 16, color: colors.textMuted },
+  batteryLow: { color: colors.danger },
+
   statGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: space.sm },
   actionRow: { flexDirection: 'row', gap: space.sm },
   actionButton: { flex: 1 },
-
-  navGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: space.sm },
-  navTile: {
-    flexGrow: 1,
-    flexBasis: '46%',
-    minHeight: 76,
-    backgroundColor: colors.raised,
-    borderWidth: 1,
-    borderColor: colors.border,
-    borderRadius: radius.md,
-    padding: space.md,
-    gap: 2,
-  },
-  navTilePressed: {
-    backgroundColor: colors.raisedHover,
-    borderColor: colors.borderStrong,
-  },
-  navLabel: { ...type.body, fontWeight: '600' },
 
   channelRow: {
     flexDirection: 'row',

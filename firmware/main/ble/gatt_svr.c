@@ -136,6 +136,20 @@ void gatt_svr_push_input_event(uint8_t button, uint8_t press_type, bool action_s
     }
 }
 
+bool gatt_svr_input_actions_suppressed(void)
+{
+    for (int i = 0; i < MC_BLE_MAX_SESSIONS; i++) {
+        if (!s_sessions[i].active ||
+            !s_sessions[i].session.input_learn_suppress_actions) {
+            continue;
+        }
+        if (mc_session_is_authed(&s_sessions[i].session)) {
+            return true;
+        }
+    }
+    return false;
+}
+
 static void dispatch_write(uint16_t conn_handle, mc_channel_t ch, const uint8_t *data, size_t len)
 {
     mc_session_t *s = session_for(conn_handle);
@@ -186,6 +200,7 @@ static int chr_access(uint16_t conn_handle, uint16_t attr_handle,
         st.output_state_mask = mask;
         if (s_app->output != NULL) {
             st.lv_cutoff_active = mc_output_lv_cutoff_active(s_app->output);
+            st.hazard_active = mc_output_hazard_active(s_app->output);
         }
         if (s_app->lock != NULL) {
             st.lock_state = mc_lock_wire_state(s_app->lock);

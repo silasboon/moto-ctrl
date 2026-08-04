@@ -13,9 +13,9 @@
  * Only roles that change firmware behaviour exist, and each says what it does.
  */
 import React, { useEffect, useMemo, useState } from 'react';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { Pressable, StyleSheet, Switch, Text, View } from 'react-native';
 
-import { INPUT_COUNT } from '../protocol/constants';
+import { INPUT_COUNT, LOCK_STATE } from '../protocol/constants';
 import type { MotoClient } from '../protocol/MotoClient';
 import {
   BEHAVIOUR_HINTS,
@@ -26,14 +26,16 @@ import {
   type DeviceConfig,
   type IndicatorSide,
   type OutputBehaviour,
+  isOutputOn,
   type OutputChannelConfig,
+  type Status,
 } from '../protocol/types';
 import {
   Badge,
   Button,
   Card,
   Field,
-  Loading,
+  SkeletonScreen,
   Notice,
   NumberField,
   Screen,
@@ -83,6 +85,29 @@ export function OutputsScreen({ client, onDone }: Props): React.JSX.Element {
    * Serialised rather than kept as an object: the whole config is replaced on
    * every keystroke, so reference equality says nothing. */
   const [baseline, setBaseline] = useState<string | null>(null);
+  /* Live switching lives here now rather than on the Ride screen. Twelve
+   * switches were the bulk of a screen a rider opens with the engine warm,
+   * and the channel's name and behaviour — the things that tell you what a
+   * switch will do — were on this screen anyway. */
+  const [status, setStatus] = useState<Status | null>(client.getLastStatus());
+  const [pending, setPending] = useState<Set<number>>(new Set());
+
+  useEffect(() => client.onStatus(setStatus), [client]);
+
+  async function toggle(channel: number, on: boolean): Promise<void> {
+    setPending(prev => new Set(prev).add(channel));
+    try {
+      await client.setOutput(channel, on);
+    } catch {
+      /* The status stream reports true device state regardless. */
+    } finally {
+      setPending(prev => {
+        const next = new Set(prev);
+        next.delete(channel);
+        return next;
+      });
+    }
+  }
 
   useEffect(() => {
     client
@@ -128,11 +153,52 @@ export function OutputsScreen({ client, onDone }: Props): React.JSX.Element {
     setSaved(false);
   }
 
+  /* Pairing is reciprocal, and the firmware rejects a config where it isn't
+   * (MC_OUT_CFG_BAD_ALTERNATE) — a one-way link would mean switching A on
+   * cancels B, but switching B on leaves A lit, i.e. both beams burning.
+   * Rather than surface that as a save-time rejection, both sides are always
+   * written together here, and any partner either channel is being taken
+   * away from is released in the same pass. */
+  function setAlternate(ch: number, partner: number): void {
+    setConfig(prev => {
+      if (!prev) return prev;
+      const channels = prev.outputs.channels.map(c => ({ ...c }));
+      const oldPartner = channels[ch]!.alternate_channel;
+      if (oldPartner >= 0 && channels[oldPartner])
+        channels[oldPartner]!.alternate_channel = -1;
+      if (partner >= 0) {
+        const partnersOld = channels[partner]!.alternate_channel;
+        if (partnersOld >= 0 && channels[partnersOld])
+          channels[partnersOld]!.alternate_channel = -1;
+        channels[partner]!.alternate_channel = ch;
+      }
+      channels[ch]!.alternate_channel = partner;
+      return { ...prev, outputs: { ...prev.outputs, channels } };
+    });
+    setSaved(false);
+  }
+
   function patchOutputs(patch: Partial<DeviceConfig['outputs']>): void {
     setConfig(prev =>
       prev ? { ...prev, outputs: { ...prev.outputs, ...patch } } : prev,
     );
     setSaved(false);
+  }
+
+  /* Offers "None", whichever channel is already this one's partner, and any
+   * channel that is currently unpaired. A channel paired to someone else is
+   * left out rather than shown and silently stealing that partner — the
+   * reciprocal write would break a pair the rider set up elsewhere on this
+   * screen with no indication it had happened. */
+  function alternateOptionsFor(ch: number): { value: string; label: string }[] {
+    const channels = config?.outputs.channels ?? [];
+    const options = [{ value: '-1', label: 'None' }];
+    channels.forEach((c, i) => {
+      if (i === ch) return;
+      const free = c.alternate_channel < 0 || c.alternate_channel === ch;
+      if (free) options.push({ value: String(i), label: channelLabel(c, i) });
+    });
+    return options;
   }
 
   const hazardCount = useMemo(
@@ -160,7 +226,8 @@ export function OutputsScreen({ client, onDone }: Props): React.JSX.Element {
     }
   }
 
-  if (loading) return <Loading label="Reading configuration…" />;
+  if (loading)
+    return <SkeletonScreen title="Outputs" onBack={back} cards={5} lines={1} />;
   if (!config) {
     return (
       <Screen title="Outputs" onBack={back}>
@@ -170,6 +237,14 @@ export function OutputsScreen({ client, onDone }: Props): React.JSX.Element {
       </Screen>
     );
   }
+
+  const isOn = (ch: number): boolean =>
+    status ? isOutputOn(status, ch) : false;
+  const faultOn = (ch: number): boolean =>
+    status ? (status.outputFaultMask & (1 << ch)) !== 0 : false;
+  /* A locked bike switches nothing on (AGENTS.md #2), so the switches are
+   * inert rather than offering commands the board will refuse. */
+  const locked = status?.lockState === LOCK_STATE.LOCKED;
 
   return (
     <Screen
@@ -199,6 +274,8 @@ export function OutputsScreen({ client, onDone }: Props): React.JSX.Element {
         if (ch.is_brake) roles.push('BRAKE');
         if (ch.indicator !== 'none') roles.push(ch.indicator.toUpperCase());
         if (ch.hazard_member) roles.push('HAZARD');
+        if (ch.on_with_ignition) roles.push('WITH IGNITION');
+        if (ch.alternate_channel >= 0) roles.push('PAIRED');
         if (ch.essential) roles.push('ESSENTIAL');
 
         return (
@@ -227,6 +304,31 @@ export function OutputsScreen({ client, onDone }: Props): React.JSX.Element {
               </View>
               <Text style={styles.chevron}>{isOpen ? '⌄' : '›'}</Text>
             </Pressable>
+
+            {/* Outside the Pressable: a switch nested inside a row that is
+             * itself a button would fight it for the touch. */}
+            <View style={styles.liveRow}>
+              <Text style={type.caption}>
+                {ch.is_starter
+                  ? 'Button only — never switchable from the app'
+                  : locked
+                    ? 'Locked — unlock the bike to switch outputs'
+                    : faultOn(i)
+                      ? 'Reporting a fault'
+                      : isOn(i)
+                        ? 'On'
+                        : 'Off'}
+              </Text>
+              <Switch
+                value={isOn(i)}
+                disabled={ch.is_starter || locked || pending.has(i) || dirty}
+                onValueChange={v => void toggle(i, v)}
+                trackColor={{ false: colors.borderStrong, true: colors.on }}
+                thumbColor={colors.text}
+                ios_backgroundColor={colors.borderStrong}
+                accessibilityLabel={`${channelLabel(ch, i)}, ${isOn(i) ? 'on' : 'off'}`}
+              />
+            </View>
 
             {roles.length > 0 && (
               <View style={styles.badgeRow}>
@@ -284,6 +386,22 @@ export function OutputsScreen({ client, onDone }: Props): React.JSX.Element {
                   hint="Flashes with the indicators during a hazard stop, whatever this channel normally does. A steady light stays steady in normal use."
                   value={ch.hazard_member}
                   onValueChange={v => patchChannel(i, { hazard_member: v })}
+                />
+
+                <Select
+                  label="Alternates with"
+                  value={String(ch.alternate_channel)}
+                  options={alternateOptionsFor(i)}
+                  onChange={v => setAlternate(i, parseInt(v, 10))}
+                  hint="Hi/lo beam, or two DRL colours. Only one of the pair is ever lit — switching one on puts the other out."
+                />
+
+                <ToggleRow
+                  label="Comes on with ignition"
+                  hint="Switches on when the ignition does and off when it does, like a key turned to “on”. You can still switch it off by hand; it stays off until the next ignition cycle."
+                  value={ch.on_with_ignition}
+                  disabled={ch.is_ignition}
+                  onValueChange={v => patchChannel(i, { on_with_ignition: v })}
                 />
 
                 <ToggleRow
@@ -344,14 +462,20 @@ export function OutputsScreen({ client, onDone }: Props): React.JSX.Element {
 
       <SectionHeader>Timing</SectionHeader>
       <Card>
+        {/* Seconds, not milliseconds: this is tens of seconds in practice,
+          * and "30" reads as half a minute where "30000" reads as nothing.
+          * Stored as ms either way — see NumberField's `scale`. */}
         <NumberField
-          label="Turn auto-cancel (ms)"
+          label="Turn auto-cancel (seconds)"
           value={config.outputs.turn_auto_cancel_ms}
           min={0}
+          scale={1000}
           onChangeValue={v => patchOutputs({ turn_auto_cancel_ms: v })}
           hint="0 never auto-cancels."
         />
         <NumberField
+          /* Stays in milliseconds: a blink period is a few hundred, and
+           * "0.7" would be a worse way to say 700. */
           label="Blink period (ms)"
           value={config.outputs.turn_flash_period_ms}
           min={1}
@@ -395,6 +519,14 @@ const styles = StyleSheet.create({
     gap: space.md,
   },
   headerRowPressed: { backgroundColor: colors.raisedHover },
+  liveRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: space.md,
+    paddingHorizontal: space.md,
+    paddingBottom: space.sm,
+  },
   headerText: { flex: 1 },
   pip: {
     width: 32,

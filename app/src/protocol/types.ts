@@ -24,6 +24,11 @@ export interface Status {
    * outputStateMask, which reflects commanded intent, not actual driven
    * state — see mc_output_lv_cutoff_active()'s doc comment. */
   lvCutoffActive: boolean;
+  /** Wire byte 15 bit 2 (docs/PROTOCOL.md §5): hazards are running right
+   * now. Not derivable from outputStateMask — hazard members blink, so that
+   * mask alternates several times a second and says nothing about whether
+   * pressing the button will start or stop them. */
+  hazardActive: boolean;
 }
 
 export function isOutputOn(status: Status, channel: number): boolean {
@@ -93,6 +98,14 @@ export interface OutputChannelConfig {
   /** Blinks together with the hazards. Anything can join — a DRL, an aux
    * light — without becoming an indicator. */
   hazard_member: boolean;
+  /** Comes on with the ignition and goes off with it, like a key turned to
+   * "on". Edge-triggered: the rider can still switch it off mid-ride and it
+   * stays off until the next ignition cycle. */
+  on_with_ignition: boolean;
+  /** Channel this one alternates with (hi/lo beam, two DRL colours), or -1.
+   * Must be reciprocal — the firmware rejects a one-way link. Lighting
+   * either member puts the other out. */
+  alternate_channel: number;
 }
 
 export type ComboType = 'chord' | 'sequence';
@@ -106,6 +119,10 @@ export const ACTION_TURN_L_TOGGLE = 1;
 export const ACTION_TURN_R_TOGGLE = 2;
 export const ACTION_HAZARD_TOGGLE = 3;
 export const ACTION_OUTPUT_TOGGLE_BASE = 256;
+/** ALTERNATE_BASE + N steps the pair channel N belongs to: whichever member
+ * is lit, light the other. Never lands on both-off — see
+ * mc_output_alternate_press(). */
+export const ACTION_OUTPUT_ALTERNATE_BASE = 512;
 
 /** Action id that toggles output channel `ch` (0-11) directly. */
 export function actionToggleOutput(ch: number): number {
@@ -115,6 +132,17 @@ export function actionToggleOutput(ch: number): number {
 /** Inverse of actionToggleOutput, or null if `id` isn't a direct binding. */
 export function outputChannelForAction(id: number): number | null {
   const ch = id - ACTION_OUTPUT_TOGGLE_BASE;
+  return ch >= 0 && ch < 12 ? ch : null;
+}
+
+/** Action id that steps the alternating pair channel `ch` belongs to. */
+export function actionAlternateOutput(ch: number): number {
+  return ACTION_OUTPUT_ALTERNATE_BASE + ch;
+}
+
+/** Inverse of actionAlternateOutput, or null if `id` isn't a pair binding. */
+export function outputChannelForAlternateAction(id: number): number | null {
+  const ch = id - ACTION_OUTPUT_ALTERNATE_BASE;
   return ch >= 0 && ch < 12 ? ch : null;
 }
 
@@ -188,6 +216,11 @@ export interface DiagnosticsJsonConfig {
 
 export interface DeviceConfig {
   schema_version: number;
+  /** Rider-chosen board name (schema_version 8). Empty means the factory
+   * default, `DEVICE_NAME` — stored empty rather than as the literal so a
+   * board that was never renamed stays distinguishable from one deliberately
+   * named "MOTO-CTRL", which is what lets an ownership transfer reset it. */
+  device_name: string;
   outputs: OutputsConfig;
   inputs: InputsConfig;
   diagnostics: DiagnosticsJsonConfig;
@@ -211,6 +244,8 @@ export function defaultOutputChannel(): OutputChannelConfig {
     is_brake: false,
     indicator: 'none',
     hazard_member: false,
+    on_with_ignition: false,
+    alternate_channel: -1,
   };
 }
 
@@ -248,7 +283,8 @@ export function defaultDiagnosticsJsonConfig(): DiagnosticsJsonConfig {
 
 export function defaultConfig(): DeviceConfig {
   return {
-    schema_version: 6,
+    schema_version: 8,
+    device_name: '',
     outputs: {
       channels: Array.from({ length: OUTPUT_COUNT }, defaultOutputChannel),
       starter_interlock_input: -1,

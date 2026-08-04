@@ -77,9 +77,9 @@ android {
     buildToolsVersion rootProject.ext.buildToolsVersion
     compileSdk rootProject.ext.compileSdkVersion
 
-    namespace "com.mototrl.app"
+    namespace "com.motoctrl.app"
     defaultConfig {
-        applicationId "com.mototrl.app"
+        applicationId "com.motoctrl.app"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
         versionCode 1

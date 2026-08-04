@@ -32,11 +32,19 @@ export const colors = {
   textFaint: '#6b7484',
   textOnAccent: '#0f1115',
 
-  /* Single accent — used for primary actions and active state. Amber reads
-   * as "instrument panel" rather than "web app blue". */
-  accent: '#f5a524',
-  accentMuted: '#4a3a1c',
-  accentBorder: '#7a5f24',
+  /* Single accent — used for primary actions and active state.
+   *
+   * 5.1:1 against `bg`, so it is legible as text and not only as a fill.
+   * `textOnAccent` stays the near-black `bg` rather than white for the same
+   * reason: dark-on-teal is also 5.1:1, where white-on-teal is 3.7:1 and
+   * fails AA for anything that isn't large.
+   *
+   * Muted/border are the accent composited over `bg` at roughly 25% and 55%,
+   * so chip fills and outlines stay in the same family rather than being
+   * eyeballed separately. */
+  accent: '#009688',
+  accentMuted: '#0b3232',
+  accentBorder: '#0a5a53',
 
   /* Status. `on` doubles as the "output energised" colour. */
   on: '#2dd4a7',

@@ -21,6 +21,7 @@ import {
 } from '../protocol/constants';
 import type { MotoClient } from '../protocol/MotoClient';
 import type { EventRecord } from '../protocol/types';
+import { Screen } from '../ui/components';
 import { colors } from '../ui/theme';
 
 interface Props {
@@ -75,13 +76,7 @@ export function EventLogScreen({ client, onDone }: Props): React.JSX.Element {
   }, [refresh]);
 
   return (
-    <View style={styles.container}>
-      <View style={styles.header}>
-        <Text style={styles.title}>Event Log</Text>
-        <TouchableOpacity onPress={onDone}>
-          <Text style={styles.link}>Done</Text>
-        </TouchableOpacity>
-      </View>
+    <Screen title="Event Log" onBack={onDone} scroll={false}>
       <TouchableOpacity
         style={styles.refreshButton}
         onPress={refresh}
@@ -111,7 +106,7 @@ export function EventLogScreen({ client, onDone }: Props): React.JSX.Element {
           </View>
         )}
       />
-    </View>
+    </Screen>
   );
 }
 

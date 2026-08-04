@@ -882,7 +882,8 @@ static void test_hazard_mode_clears_on_second_press(void)
 }
 
 /* Signalling a turn while hazards run ends hazard mode — any deliberate
- * command to a member does. */
+ * command to a member does — and every other member goes back to where it was
+ * before the hazards, not to off and not left latched on. */
 static void test_explicit_command_to_a_member_ends_hazard_mode(void)
 {
     mc_output_config_t cfg;
@@ -891,6 +892,9 @@ static void test_explicit_command_to_a_member_ends_hazard_mode(void)
     cfg.channels[0].indicator = MC_INDICATOR_LEFT;
     cfg.channels[0].behaviour = MC_OUT_BEHAVIOUR_BLINK;
     cfg.channels[0].hazard_member = true;
+    cfg.channels[1].indicator = MC_INDICATOR_RIGHT;
+    cfg.channels[1].behaviour = MC_OUT_BEHAVIOUR_BLINK;
+    cfg.channels[1].hazard_member = true;
     cfg.channels[5].behaviour = MC_OUT_BEHAVIOUR_TOGGLE;
     cfg.channels[5].hazard_member = true;
 
@@ -898,15 +902,447 @@ static void test_explicit_command_to_a_member_ends_hazard_mode(void)
     mc_output_init(&eng, &cfg, (mc_output_hal_t){0});
 
     mc_output_hazard_press(&eng, 0);
-    assert(mc_output_get_actual_state(&eng, 5, 350) == false);
+    assert(mc_output_get_actual_state(&eng, 5, 350) == false); /* blinking */
 
-    /* Rider signals left. */
+    /* Rider signals left out of the hazard stop. */
     assert(mc_output_set(&eng, 0, true, MC_OUT_SRC_LOCAL) == MC_OUT_OK);
-    /* The DRL, still commanded on from the hazards, goes back to solid. */
-    assert(mc_output_get_actual_state(&eng, 5, 350) == true);
-    /* The indicator keeps blinking — that is its own behaviour, not hazards. */
+    assert(mc_output_hazard_active(&eng) == false);
+    /* The DRL was off before the hazards, so off is where it belongs. */
+    assert(mc_output_get_state(&eng, 5) == false);
+    /* And the far indicator releases, rather than staying latched on and
+     * blinking — which looked exactly like the hazards had never stopped. */
+    assert(mc_output_get_state(&eng, 1) == false);
+    /* The signalled one keeps blinking: its own behaviour, not hazards. */
+    assert(mc_output_get_state(&eng, 0) == true);
     assert(mc_output_get_actual_state(&eng, 0, 350) == false);
 }
+
+/* The reported bug: a DRL that was already lit went dark when the hazards
+ * were switched off, because ending them forced every member off rather than
+ * back to where it started. */
+static void test_hazards_restore_a_member_that_was_already_on(void)
+{
+    mc_output_config_t cfg;
+    mc_output_config_default(&cfg);
+    cfg.turn_flash_period_ms = 700;
+    cfg.channels[0].indicator = MC_INDICATOR_LEFT;
+    cfg.channels[0].behaviour = MC_OUT_BEHAVIOUR_BLINK;
+    cfg.channels[0].hazard_member = true;
+    cfg.channels[5].behaviour = MC_OUT_BEHAVIOUR_TOGGLE;
+    cfg.channels[5].hazard_member = true; /* the DRL */
+
+    mc_output_engine_t eng;
+    mc_output_init(&eng, &cfg, (mc_output_hal_t){0});
+
+    /* DRL on, riding normally: solid, because hazards aren't running. */
+    assert(mc_output_set(&eng, 5, true, MC_OUT_SRC_LOCAL) == MC_OUT_OK);
+    assert(mc_output_get_actual_state(&eng, 5, 350) == true);
+
+    mc_output_hazard_press(&eng, 0);
+    assert(mc_output_hazard_active(&eng) == true);
+    assert(mc_output_get_actual_state(&eng, 5, 350) == false); /* now blinking */
+
+    mc_output_hazard_press(&eng, 0);
+    assert(mc_output_hazard_active(&eng) == false);
+    /* Back to lit and solid — the rider asked for the hazards to stop, not
+     * for their running light to go out. */
+    assert(mc_output_get_state(&eng, 5) == true);
+    assert(mc_output_get_actual_state(&eng, 5, 350) == true);
+    /* The indicator, off beforehand, stays off. */
+    assert(mc_output_get_state(&eng, 0) == false);
+}
+
+/* With a member left on, "is the group lit" is no longer the same question as
+ * "are the hazards running" — so a press must key on hazard mode itself or it
+ * inverts, and the next press would stop hazards that never started. */
+static void test_hazards_start_even_when_a_member_is_already_lit(void)
+{
+    mc_output_config_t cfg;
+    mc_output_config_default(&cfg);
+    cfg.turn_flash_period_ms = 700;
+    cfg.channels[5].behaviour = MC_OUT_BEHAVIOUR_TOGGLE;
+    cfg.channels[5].hazard_member = true;
+
+    mc_output_engine_t eng;
+    mc_output_init(&eng, &cfg, (mc_output_hal_t){0});
+
+    /* A single-member group, already lit: "all members on" was true here, so
+     * the old all_on test would have read this press as "stop". */
+    assert(mc_output_set(&eng, 5, true, MC_OUT_SRC_LOCAL) == MC_OUT_OK);
+
+    mc_output_hazard_press(&eng, 0);
+    assert(mc_output_hazard_active(&eng) == true);
+    assert(mc_output_get_actual_state(&eng, 5, 350) == false); /* blinking */
+
+    mc_output_hazard_press(&eng, 0);
+    assert(mc_output_hazard_active(&eng) == false);
+    assert(mc_output_get_state(&eng, 5) == true);
+}
+
+/* An indicator interrupted mid-signal by a hazard stop comes back with a
+ * fresh auto-cancel window, not latched on for the rest of the ride. */
+static void test_restored_indicator_rearms_auto_cancel(void)
+{
+    mc_output_config_t cfg;
+    mc_output_config_default(&cfg);
+    cfg.turn_flash_period_ms = 700;
+    cfg.turn_auto_cancel_ms = 5000;
+    cfg.channels[0].indicator = MC_INDICATOR_LEFT;
+    cfg.channels[0].behaviour = MC_OUT_BEHAVIOUR_BLINK;
+    cfg.channels[0].hazard_member = true;
+
+    mc_output_engine_t eng;
+    mc_output_init(&eng, &cfg, (mc_output_hal_t){0});
+    mc_output_tick(&eng, 0);
+
+    assert(mc_output_set(&eng, 0, true, MC_OUT_SRC_LOCAL) == MC_OUT_OK);
+    mc_output_hazard_press(&eng, 1000);
+    mc_output_hazard_press(&eng, 2000); /* restored to on, re-armed from 2000 */
+    assert(mc_output_get_state(&eng, 0) == true);
+
+    mc_output_tick(&eng, 6000);
+    assert(mc_output_get_state(&eng, 0) == true); /* 4s in, still signalling */
+    mc_output_tick(&eng, 7500);
+    assert(mc_output_get_state(&eng, 0) == false); /* expired */
+}
+
+/* --- schema_version 7: ignition companions (a key turned to "on") --- */
+
+/* Sets up ch0 = ignition, ch5 + ch6 = companions, ch7 = uninvolved. */
+static void companion_config(mc_output_config_t *cfg)
+{
+    mc_output_config_default(cfg);
+    cfg->channels[0].is_ignition = true;
+    cfg->channels[5].on_with_ignition = true;
+    cfg->channels[6].on_with_ignition = true;
+}
+
+static void test_ignition_on_lights_its_companions(void)
+{
+    mc_output_config_t cfg;
+    companion_config(&cfg);
+
+    mc_output_engine_t eng;
+    mc_output_init(&eng, &cfg, (mc_output_hal_t){0});
+
+    assert(mc_output_get_state(&eng, 5) == false);
+    assert(mc_output_set(&eng, 0, true, MC_OUT_SRC_REMOTE) == MC_OUT_OK);
+
+    assert(mc_output_get_state(&eng, 5) == true);
+    assert(mc_output_get_state(&eng, 6) == true);
+    assert(mc_output_get_state(&eng, 7) == false); /* not flagged, untouched */
+}
+
+static void test_ignition_off_drops_its_companions(void)
+{
+    mc_output_config_t cfg;
+    companion_config(&cfg);
+
+    mc_output_engine_t eng;
+    mc_output_init(&eng, &cfg, (mc_output_hal_t){0});
+
+    assert(mc_output_set(&eng, 0, true, MC_OUT_SRC_REMOTE) == MC_OUT_OK);
+    assert(mc_output_set(&eng, 0, false, MC_OUT_SRC_REMOTE) == MC_OUT_OK);
+
+    assert(mc_output_get_state(&eng, 5) == false);
+    assert(mc_output_get_state(&eng, 6) == false);
+}
+
+/* The whole reason this is edge-triggered rather than held: a rider must be
+ * able to switch a DRL off mid-ride without killing the ignition to do it. */
+static void test_companion_switched_off_by_hand_stays_off(void)
+{
+    mc_output_config_t cfg;
+    companion_config(&cfg);
+
+    mc_output_engine_t eng;
+    mc_output_init(&eng, &cfg, (mc_output_hal_t){0});
+
+    assert(mc_output_set(&eng, 0, true, MC_OUT_SRC_REMOTE) == MC_OUT_OK);
+    assert(mc_output_set(&eng, 5, false, MC_OUT_SRC_LOCAL) == MC_OUT_OK);
+    assert(mc_output_get_state(&eng, 5) == false);
+
+    /* Ticking, and re-commanding an already-on ignition, must not undo it. */
+    mc_output_tick(&eng, 1000);
+    assert(mc_output_set(&eng, 0, true, MC_OUT_SRC_REMOTE) == MC_OUT_OK);
+    assert(mc_output_get_state(&eng, 5) == false);
+    assert(mc_output_get_state(&eng, 6) == true); /* the other one is unaffected */
+}
+
+/* The reported bug: hi/lo beam stayed lit after the ignition was switched
+ * off, because the off-sweep only visited channels flagged on_with_ignition.
+ * The flag says what comes ON with the key; everything goes off with it. */
+static void test_ignition_off_drops_every_channel_not_just_companions(void)
+{
+    mc_output_config_t cfg;
+    companion_config(&cfg);
+    /* An alternating headlight pair, deliberately NOT flagged — a rider
+     * switches these by hand. */
+    cfg.channels[3].alternate_channel = 4;
+    cfg.channels[4].alternate_channel = 3;
+    cfg.channels[7].essential = true; /* essential is a cutoff rule, not a key rule */
+
+    mc_output_engine_t eng;
+    mc_output_init(&eng, &cfg, (mc_output_hal_t){0});
+
+    assert(mc_output_set(&eng, 0, true, MC_OUT_SRC_REMOTE) == MC_OUT_OK);
+    assert(mc_output_alternate_press(&eng, 3, MC_OUT_SRC_LOCAL) == MC_OUT_OK);
+    assert(mc_output_set(&eng, 7, true, MC_OUT_SRC_LOCAL) == MC_OUT_OK);
+    assert(mc_output_get_state(&eng, 3) == true);
+    assert(mc_output_get_state(&eng, 7) == true);
+
+    assert(mc_output_set(&eng, 0, false, MC_OUT_SRC_REMOTE) == MC_OUT_OK);
+
+    for (uint8_t ch = 0; ch < MC_OUTPUT_COUNT; ch++) {
+        assert(mc_output_get_state(&eng, ch) == false);
+    }
+}
+
+/* Killing the ignition while the hazards run must not leave the flag set:
+ * the status wire would report running hazards with every member dark, and
+ * the next press would read as "stop". */
+static void test_ignition_off_ends_hazard_mode(void)
+{
+    mc_output_config_t cfg;
+    mc_output_config_default(&cfg);
+    cfg.turn_flash_period_ms = 700;
+    cfg.channels[0].is_ignition = true;
+    cfg.channels[1].indicator = MC_INDICATOR_LEFT;
+    cfg.channels[1].hazard_member = true;
+    cfg.channels[2].indicator = MC_INDICATOR_RIGHT;
+    cfg.channels[2].hazard_member = true;
+
+    mc_output_engine_t eng;
+    mc_output_init(&eng, &cfg, (mc_output_hal_t){0});
+
+    assert(mc_output_set(&eng, 0, true, MC_OUT_SRC_REMOTE) == MC_OUT_OK);
+    mc_output_hazard_press(&eng, 0);
+    assert(mc_output_hazard_active(&eng) == true);
+
+    assert(mc_output_set(&eng, 0, false, MC_OUT_SRC_REMOTE) == MC_OUT_OK);
+    assert(mc_output_hazard_active(&eng) == false);
+    assert(mc_output_get_state(&eng, 1) == false);
+    assert(mc_output_get_state(&eng, 2) == false);
+
+    /* ...and hazards can still be run with the key off, which is the whole
+     * point of a hazard switch on a parked bike. */
+    mc_output_hazard_press(&eng, 0);
+    assert(mc_output_hazard_active(&eng) == true);
+    assert(mc_output_get_state(&eng, 1) == true);
+}
+
+/* Only a real off-edge sweeps. Re-commanding an already-off ignition must not
+ * keep stamping outputs off underneath a rider who just switched one on. */
+static void test_ignition_off_sweep_is_edge_triggered(void)
+{
+    mc_output_config_t cfg;
+    companion_config(&cfg);
+
+    mc_output_engine_t eng;
+    mc_output_init(&eng, &cfg, (mc_output_hal_t){0});
+
+    assert(mc_output_set(&eng, 0, true, MC_OUT_SRC_REMOTE) == MC_OUT_OK);
+    assert(mc_output_set(&eng, 0, false, MC_OUT_SRC_REMOTE) == MC_OUT_OK);
+
+    /* Key off, rider switches an aux circuit on deliberately. */
+    assert(mc_output_set(&eng, 7, true, MC_OUT_SRC_LOCAL) == MC_OUT_OK);
+    assert(mc_output_set(&eng, 0, false, MC_OUT_SRC_REMOTE) == MC_OUT_OK);
+    assert(mc_output_get_state(&eng, 7) == true);
+
+    mc_output_tick(&eng, 5000);
+    assert(mc_output_get_state(&eng, 7) == true);
+}
+
+/* AGENTS.md #1: restore replays exactly what was last commanded. Synthesising
+ * an ignition edge at boot would light companions the rider had switched off
+ * before parking. */
+static void test_restore_does_not_fire_the_ignition_edge(void)
+{
+    mc_output_config_t cfg;
+    companion_config(&cfg);
+    cfg.channels[0].commanded_on = true;  /* ignition was live when parked */
+    cfg.channels[5].commanded_on = false; /* ...but this was switched off */
+
+    recorder_t rec = {0};
+    mc_output_engine_t eng;
+    mc_output_init(&eng, &cfg, (mc_output_hal_t){ .set = hal_set, .ctx = &rec });
+    mc_output_restore_from_config(&eng);
+
+    assert(mc_output_get_state(&eng, 5) == false);
+    assert(mc_output_get_state(&eng, 0) == true);
+}
+
+/* A locked bike refuses the ignition, so nothing downstream of it may light
+ * either — the companions must not become a way around the immobilizer. */
+static void test_immobilized_ignition_lights_no_companions(void)
+{
+    mc_output_config_t cfg;
+    companion_config(&cfg);
+
+    mc_output_engine_t eng;
+    mc_output_init(&eng, &cfg, (mc_output_hal_t){0});
+    mc_output_set_immobilized(&eng, true);
+
+    assert(mc_output_set(&eng, 0, true, MC_OUT_SRC_REMOTE) == MC_OUT_ERR_IMMOBILIZED);
+    assert(mc_output_get_state(&eng, 5) == false);
+    assert(mc_output_get_state(&eng, 6) == false);
+}
+
+/* --- schema_version 7: alternating pairs (hi/lo beam, DRL colours) --- */
+
+static void pair_config(mc_output_config_t *cfg)
+{
+    mc_output_config_default(cfg);
+    cfg->channels[3].alternate_channel = 4;
+    cfg->channels[4].alternate_channel = 3;
+}
+
+static void test_lighting_one_of_a_pair_puts_the_other_out(void)
+{
+    mc_output_config_t cfg;
+    pair_config(&cfg);
+
+    mc_output_engine_t eng;
+    mc_output_init(&eng, &cfg, (mc_output_hal_t){0});
+
+    assert(mc_output_set(&eng, 3, true, MC_OUT_SRC_LOCAL) == MC_OUT_OK);
+    assert(mc_output_get_state(&eng, 3) == true);
+    assert(mc_output_get_state(&eng, 4) == false);
+
+    /* Exclusion is symmetric, and applies to an app command too. */
+    assert(mc_output_set(&eng, 4, true, MC_OUT_SRC_REMOTE) == MC_OUT_OK);
+    assert(mc_output_get_state(&eng, 3) == false);
+    assert(mc_output_get_state(&eng, 4) == true);
+}
+
+static void test_alternate_press_steps_between_members(void)
+{
+    mc_output_config_t cfg;
+    pair_config(&cfg);
+
+    mc_output_engine_t eng;
+    mc_output_init(&eng, &cfg, (mc_output_hal_t){0});
+
+    /* From cold, the pressed channel lights. */
+    assert(mc_output_alternate_press(&eng, 3, MC_OUT_SRC_LOCAL) == MC_OUT_OK);
+    assert(mc_output_get_state(&eng, 3) == true);
+    assert(mc_output_get_state(&eng, 4) == false);
+
+    /* Then it steps back and forth, never landing on both-off. */
+    for (int i = 0; i < 4; i++) {
+        assert(mc_output_alternate_press(&eng, 3, MC_OUT_SRC_LOCAL) == MC_OUT_OK);
+        bool three = mc_output_get_state(&eng, 3);
+        bool four = mc_output_get_state(&eng, 4);
+        assert(three != four); /* exactly one lit, every single press */
+    }
+}
+
+/* "Never off" is a property of the press action, not of the pair: the app
+ * (or a binding aimed at the channel) can still black the pair out. */
+static void test_direct_command_can_still_turn_a_pair_off(void)
+{
+    mc_output_config_t cfg;
+    pair_config(&cfg);
+
+    mc_output_engine_t eng;
+    mc_output_init(&eng, &cfg, (mc_output_hal_t){0});
+
+    assert(mc_output_alternate_press(&eng, 3, MC_OUT_SRC_LOCAL) == MC_OUT_OK);
+    assert(mc_output_set(&eng, 3, false, MC_OUT_SRC_REMOTE) == MC_OUT_OK);
+    assert(mc_output_get_state(&eng, 3) == false);
+    assert(mc_output_get_state(&eng, 4) == false);
+
+    /* And a press from that state lights the pressed one again. */
+    assert(mc_output_alternate_press(&eng, 3, MC_OUT_SRC_LOCAL) == MC_OUT_OK);
+    assert(mc_output_get_state(&eng, 3) == true);
+}
+
+static void test_alternate_press_without_a_partner_is_rejected(void)
+{
+    mc_output_config_t cfg;
+    mc_output_config_default(&cfg);
+
+    mc_output_engine_t eng;
+    mc_output_init(&eng, &cfg, (mc_output_hal_t){0});
+
+    assert(mc_output_alternate_press(&eng, 3, MC_OUT_SRC_LOCAL) == MC_OUT_ERR_BAD_CHANNEL);
+    assert(mc_output_get_state(&eng, 3) == false);
+}
+
+/* The starter guards sit in mc_output_set(), which the press helper goes
+ * through — so a pair can't be used to sneak the starter on from the app. */
+static void test_alternate_press_still_obeys_the_starter_guards(void)
+{
+    mc_output_config_t cfg;
+    pair_config(&cfg);
+    cfg.channels[3].is_starter = true;
+
+    mc_output_engine_t eng;
+    mc_output_init(&eng, &cfg, (mc_output_hal_t){0});
+
+    assert(mc_output_alternate_press(&eng, 3, MC_OUT_SRC_REMOTE) ==
+           MC_OUT_ERR_STARTER_REMOTE_BLOCKED);
+    assert(mc_output_get_state(&eng, 3) == false);
+}
+
+/* A one-way link would leave both beams lit: A-on cancels B, but B-on
+ * wouldn't cancel A. Refuse the config rather than half-apply it. */
+static void test_config_validate_flags_asymmetric_pairs(void)
+{
+    mc_output_config_t cfg;
+    mc_output_config_default(&cfg);
+    cfg.channels[3].alternate_channel = 4; /* ...and ch4 names nobody */
+    assert((mc_output_config_validate(&cfg) & MC_OUT_CFG_BAD_ALTERNATE) != 0);
+
+    cfg.channels[4].alternate_channel = 3;
+    assert((mc_output_config_validate(&cfg) & MC_OUT_CFG_BAD_ALTERNATE) == 0);
+
+    cfg.channels[3].alternate_channel = 3; /* itself */
+    assert((mc_output_config_validate(&cfg) & MC_OUT_CFG_BAD_ALTERNATE) != 0);
+
+    cfg.channels[3].alternate_channel = MC_OUTPUT_COUNT; /* out of range */
+    assert((mc_output_config_validate(&cfg) & MC_OUT_CFG_BAD_ALTERNATE) != 0);
+}
+
+static void test_config_validate_flags_pair_fighting_over_ignition(void)
+{
+    mc_output_config_t cfg;
+    pair_config(&cfg);
+    cfg.channels[3].on_with_ignition = true;
+    assert((mc_output_config_validate(&cfg) & MC_OUT_CFG_ALTERNATE_BOTH_IGNITION) == 0);
+
+    cfg.channels[4].on_with_ignition = true;
+    assert((mc_output_config_validate(&cfg) & MC_OUT_CFG_ALTERNATE_BOTH_IGNITION) != 0);
+}
+
+/* --- schema_version 7: hazard state is reportable --- */
+
+static void test_hazard_active_tracks_the_group(void)
+{
+    mc_output_config_t cfg;
+    mc_output_config_default(&cfg);
+    cfg.turn_flash_period_ms = 700;
+    cfg.channels[0].indicator = MC_INDICATOR_LEFT;
+    cfg.channels[0].hazard_member = true;
+    cfg.channels[1].indicator = MC_INDICATOR_RIGHT;
+    cfg.channels[1].hazard_member = true;
+
+    mc_output_engine_t eng;
+    mc_output_init(&eng, &cfg, (mc_output_hal_t){0});
+    assert(mc_output_hazard_active(&eng) == false);
+
+    mc_output_hazard_press(&eng, 0);
+    assert(mc_output_hazard_active(&eng) == true);
+    /* The point of the flag: the driven state alternates while this holds
+     * steady, so a client can't infer it from the output mask. */
+    assert(mc_output_get_actual_state(&eng, 0, 0) == true);
+    assert(mc_output_get_actual_state(&eng, 0, 350) == false);
+    assert(mc_output_hazard_active(&eng) == true);
+
+    mc_output_hazard_press(&eng, 0);
+    assert(mc_output_hazard_active(&eng) == false);
+}
+
 
 int main(void)
 {
@@ -927,6 +1363,9 @@ int main(void)
     test_hazard_member_is_solid_when_used_normally();
     test_hazard_mode_clears_on_second_press();
     test_explicit_command_to_a_member_ends_hazard_mode();
+    test_hazards_restore_a_member_that_was_already_on();
+    test_hazards_start_even_when_a_member_is_already_lit();
+    test_restored_indicator_rearms_auto_cancel();
 
     test_default_config_mode_is_on();
     test_find_channel_by_role();
@@ -949,5 +1388,22 @@ int main(void)
     test_engine_start_does_not_disturb_other_channels();
     test_engine_running_cut_is_edge_triggered();
     test_momentary_flag_is_inert_inside_the_engine();
+
+    test_ignition_on_lights_its_companions();
+    test_ignition_off_drops_its_companions();
+    test_ignition_off_drops_every_channel_not_just_companions();
+    test_ignition_off_ends_hazard_mode();
+    test_ignition_off_sweep_is_edge_triggered();
+    test_companion_switched_off_by_hand_stays_off();
+    test_restore_does_not_fire_the_ignition_edge();
+    test_immobilized_ignition_lights_no_companions();
+    test_lighting_one_of_a_pair_puts_the_other_out();
+    test_alternate_press_steps_between_members();
+    test_direct_command_can_still_turn_a_pair_off();
+    test_alternate_press_without_a_partner_is_rejected();
+    test_alternate_press_still_obeys_the_starter_guards();
+    test_config_validate_flags_asymmetric_pairs();
+    test_config_validate_flags_pair_fighting_over_ignition();
+    test_hazard_active_tracks_the_group();
     return 0;
 }

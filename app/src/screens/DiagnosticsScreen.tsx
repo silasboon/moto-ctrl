@@ -29,8 +29,9 @@ import {
 } from '../protocol/constants';
 import type { MotoClient } from '../protocol/MotoClient';
 import {
-  KeyboardAwareScroll,
   NumberInput,
+  Screen,
+  SkeletonScreen,
   useLeaveGuard,
 } from '../ui/components';
 import { colors } from '../ui/theme';
@@ -204,25 +205,11 @@ export function DiagnosticsScreen({
   const back = useLeaveGuard(dirty, onDone);
 
   if (loading) {
-    return (
-      <View style={styles.center}>
-        <Text>Loading…</Text>
-      </View>
-    );
+    return <SkeletonScreen title="Diagnostics" onBack={back} cards={4} />;
   }
 
   return (
-    <KeyboardAwareScroll
-      style={styles.container}
-      contentContainerStyle={styles.content}
-    >
-      <View style={styles.header}>
-        <Text style={styles.title}>Diagnostics</Text>
-        <TouchableOpacity onPress={back}>
-          <Text style={styles.link}>Back</Text>
-        </TouchableOpacity>
-      </View>
-
+    <Screen title="Diagnostics" onBack={back}>
       <Text style={styles.sectionTitle}>Battery / cutoff</Text>
       <View style={styles.row}>
         <Text style={styles.rowLabel}>Low-voltage cutoff (mV)</Text>
@@ -409,7 +396,7 @@ export function DiagnosticsScreen({
           {calibSaving ? 'Saving…' : 'Save calibration'}
         </Text>
       </TouchableOpacity>
-    </KeyboardAwareScroll>
+    </Screen>
   );
 }
 

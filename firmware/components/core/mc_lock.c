@@ -24,11 +24,23 @@ static bool ignition_is_live(const mc_output_engine_t *output)
 /* Forces any ON ignition/starter channel off. Never blocked by the
  * immobilized flag (that flag only guards turning ON), so this always
  * succeeds. Called on entering LOCKED. */
-static void force_off_immobilized_channels(mc_output_engine_t *output)
+/* Locking makes the bike dark: every channel the rider left on goes off, not
+ * just ignition and starter. Otherwise the headlight they forgot about burns
+ * all night on a bike that is supposedly secured.
+ *
+ * Running hazards survive, and only while they are actually running — a bike
+ * locked at the roadside must keep flashing. mc_output blocks switching
+ * anything ON while immobilized, so this is the one-shot counterpart to that
+ * standing rule. */
+static void force_off_on_lock(mc_output_engine_t *output)
 {
+    bool hazards_running = mc_output_hazard_active(output);
     for (uint8_t ch = 0; ch < MC_OUTPUT_COUNT; ch++) {
         const mc_output_channel_config_t *cfg = &output->config.channels[ch];
-        if ((cfg->is_ignition || cfg->is_starter) && mc_output_get_state(output, ch)) {
+        if (hazards_running && cfg->hazard_member) {
+            continue;
+        }
+        if (mc_output_get_state(output, ch)) {
             mc_output_set(output, ch, false, MC_OUT_SRC_LOCAL);
         }
     }
@@ -62,8 +74,12 @@ static void enter_locked(mc_lock_t *lock, mc_output_engine_t *output, uint32_t n
         lock->locked_flag = true;
         lock->dirty = true;
     }
+    /* Sweep BEFORE the inhibit goes up, so each channel goes off through the
+     * ordinary mc_output_set() path (turning off is never blocked, but the
+     * ignition's own off-edge behaviour is easier to reason about outside the
+     * locked state). */
+    force_off_on_lock(output);
     mc_output_set_immobilized(output, true);
-    force_off_immobilized_channels(output);
 }
 
 static void enter_unlocked(mc_lock_t *lock, mc_output_engine_t *output)
@@ -77,6 +93,23 @@ static void enter_unlocked(mc_lock_t *lock, mc_output_engine_t *output)
     if (was_locked) {
         mc_output_set_immobilized(output, false);
         reset_cheatcode_runtime(lock);
+
+        /* Unlocking turns the key: the ignition output comes live, so the
+         * bike is ready to start rather than needing a second, separate
+         * action the rider has no reason to expect.
+         *
+         * After the inhibit is lifted, or mc_output_set() would refuse its
+         * own unlock. This is an ordinary command, so everything downstream
+         * follows for free — on_with_ignition companions light, and the
+         * starter's guards are untouched (unlocking never cranks anything).
+         *
+         * If an ignition-switch input is configured it stays authoritative in
+         * the sense that turning it off drops the ignition again through the
+         * normal path; this only decides the state at the moment of unlock. */
+        int ign = mc_output_find_ignition_channel(&output->config);
+        if (ign >= 0) {
+            mc_output_set(output, (uint8_t)ign, true, MC_OUT_SRC_LOCAL);
+        }
     }
 }
 
@@ -118,8 +151,14 @@ uint32_t mc_lock_config_validate(const mc_lock_config_t *cfg, const mc_output_co
 {
     uint32_t flags = 0;
     if (cfg->immobilizer_enabled) {
-        if (!cfg->cheatcode_set) {
-            flags |= MC_LOCK_CFG_ENABLE_REQUIRES_CHEATCODE;
+        /* Either fallback will do, but there must be one. An ignition-switch
+         * input only counts if the method is actually enabled AND an input is
+         * assigned — a mask bit pointing at nothing is not a way in. */
+        bool has_switch = (cfg->methods_mask & MC_LOCK_METHOD_IGNITION_SWITCH) != 0 &&
+                          cfg->ignition_switch_input >= 0 &&
+                          cfg->ignition_switch_input < MC_INPUT_COUNT;
+        if (!cfg->cheatcode_set && !has_switch) {
+            flags |= MC_LOCK_CFG_ENABLE_REQUIRES_FALLBACK;
         }
         if (mc_output_find_ignition_channel(outputs) < 0) {
             flags |= MC_LOCK_CFG_ENABLE_REQUIRES_IGNITION_CHANNEL;
@@ -156,10 +195,15 @@ void mc_lock_init(mc_lock_t *lock, const mc_lock_config_t *config, bool persiste
         lock->locked_flag = true;
         mc_output_set_immobilized(output, true);
         /* mc_output_restore_from_config() (which ran before mc_lock_init,
-         * per boot order) should already have restored ignition/starter as
-         * OFF, since entering LOCKED always forces + persists them off.
-         * Re-assert defensively in case config and lock state ever drift. */
-        force_off_immobilized_channels(output);
+         * per boot order) should already have restored everything as OFF,
+         * since entering LOCKED forces + persists the whole board off.
+         * Re-assert defensively in case config and lock state ever drift.
+         *
+         * Turning OFF is permitted while immobilized, so the order here is
+         * harmless. Hazards cannot be running this early — the engine was
+         * zeroed at init — so nothing is exempt and the bike comes up dark,
+         * which is what a locked bike should do after a power cut. */
+        force_off_on_lock(output);
     } else {
         lock->state = MC_LOCK_ST_UNLOCKED;
         lock->locked_flag = false;

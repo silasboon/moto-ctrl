@@ -7,18 +7,27 @@
  * which this still satisfies end to end.
  */
 import React, { useCallback, useEffect, useState } from 'react';
-import {
-  ActivityIndicator,
-  StyleSheet,
-  Text,
-  TouchableOpacity,
-  View,
-} from 'react-native';
+import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 
+import {
+  defaultKeyLabel,
+  loadOrCreateIdentity,
+  saveIdentity,
+  type Identity,
+} from '../identity/KeyStore';
 import { base64ToBytes } from '../protocol/frames';
 import type { MotoClient } from '../protocol/MotoClient';
 import type { EnrolledKey } from '../protocol/types';
-import { Input, KeyboardAwareScroll } from '../ui/components';
+import {
+  Button,
+  Card,
+  Field,
+  Input,
+  Notice,
+  Screen,
+  SectionHeader,
+  SkeletonCard,
+} from '../ui/components';
 import { colors } from '../ui/theme';
 
 interface Props {
@@ -34,6 +43,15 @@ export function KeysScreen({ client, onDone }: Props): React.JSX.Element {
   const [message, setMessage] = useState<string | null>(null);
   const [newPubkeyB64, setNewPubkeyB64] = useState('');
   const [newLabel, setNewLabel] = useState('');
+
+  /* This phone's own key. Edited here rather than on the pairing screen,
+   * which is gone the moment a board connects — the one place a rider would
+   * never be able to come back to. */
+  const [identity, setIdentity] = useState<Identity | null>(null);
+  const [renaming, setRenaming] = useState(false);
+  useEffect(() => {
+    void loadOrCreateIdentity().then(setIdentity);
+  }, []);
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -94,20 +112,71 @@ export function KeysScreen({ client, onDone }: Props): React.JSX.Element {
     }
   }
 
+  /* Renaming means re-sending ENROLL with this phone's own public key: the
+   * board's keystore treats an add of a key it already holds as a label
+   * update on the existing slot, so there is no rename opcode to add and no
+   * new slot consumed. It needs an authenticated session, which is exactly
+   * what this screen already has. */
+  async function renameThisPhone(): Promise<void> {
+    if (!identity) return;
+    const label = identity.label.trim() || defaultKeyLabel();
+    setRenaming(true);
+    setError(null);
+    setMessage(null);
+    try {
+      const next = { ...identity, label };
+      setIdentity(next);
+      await saveIdentity(next);
+      const result = await client.enroll(next.keypair.publicKey, label);
+      setMessage(
+        result.ok
+          ? 'Name updated on the board.'
+          : `Saved on this phone, but the board rejected it: ${result.resultName}`,
+      );
+      if (result.ok) await refresh();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setRenaming(false);
+    }
+  }
+
   return (
-    <KeyboardAwareScroll
-      style={styles.container}
-      contentContainerStyle={styles.content}
-    >
-      <View style={styles.header}>
-        <Text style={styles.title}>Paired Keys</Text>
-        <TouchableOpacity onPress={onDone}>
-          <Text style={styles.link}>Back</Text>
-        </TouchableOpacity>
-      </View>
+    <Screen title="Paired Keys" onBack={onDone}>
+      <SectionHeader hint="How this phone appears in the list below.">
+        This phone
+      </SectionHeader>
+      <Card>
+        <Field
+          label="Key name"
+          value={identity?.label ?? ''}
+          editable={!!identity}
+          onChangeText={v => identity && setIdentity({ ...identity, label: v })}
+          placeholder={defaultKeyLabel()}
+          maxLength={31}
+          autoCapitalize="words"
+          autoCorrect={false}
+        />
+        <Button
+          label={renaming ? 'Saving' : 'Save name'}
+          tone="secondary"
+          busy={renaming}
+          disabled={!identity}
+          onPress={renameThisPhone}
+        />
+      </Card>
+      {/* iOS won't hand over "Silas's iPhone" — see defaultKeyLabel — so on a
+       * shared bike both phones enrol as "iPhone" unless someone types
+       * something. Worth saying once, here, where it can be fixed. */}
+      <Notice tone="info">
+        Your phone can only tell the app its model, not the name you gave it, so
+        it is worth setting this if more than one phone unlocks this bike.
+      </Notice>
+
+      <SectionHeader>Enrolled</SectionHeader>
 
       {loading ? (
-        <ActivityIndicator />
+        <SkeletonCard lines={1} />
       ) : (
         (keys ?? []).map(k => (
           <View key={k.slot} style={styles.keyRow}>
@@ -153,7 +222,7 @@ export function KeysScreen({ client, onDone }: Props): React.JSX.Element {
 
       {error && <Text style={styles.error}>{error}</Text>}
       {message && <Text style={styles.success}>{message}</Text>}
-    </KeyboardAwareScroll>
+    </Screen>
   );
 }
 

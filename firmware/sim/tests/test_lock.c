@@ -92,7 +92,7 @@ static void test_config_validate(void)
 
     cfg.immobilizer_enabled = true;
     uint32_t flags = mc_lock_config_validate(&cfg, &out);
-    assert(flags & MC_LOCK_CFG_ENABLE_REQUIRES_CHEATCODE);
+    assert(flags & MC_LOCK_CFG_ENABLE_REQUIRES_FALLBACK);
     assert(flags & MC_LOCK_CFG_ENABLE_REQUIRES_IGNITION_CHANNEL); /* `out` has no ignition channel */
 
     cfg.cheatcode_set = true;
@@ -210,7 +210,7 @@ static void test_apply_config_rejects_enable_without_cheatcode(void)
 
     uint32_t flags = mc_lock_apply_config(&fx.lock, &fx.output, &fx.out_cfg,
                                           true, MC_LOCK_METHOD_PHONE, -1, 60000, 5000, 0);
-    assert(flags & MC_LOCK_CFG_ENABLE_REQUIRES_CHEATCODE);
+    assert(flags & MC_LOCK_CFG_ENABLE_REQUIRES_FALLBACK);
     assert(fx.lock.state == MC_LOCK_ST_DISABLED); /* unchanged */
     assert(fx.lock.config.immobilizer_enabled == false);
 }
@@ -697,13 +697,50 @@ static void test_output_blocks_ignition_and_starter_while_immobilized(void)
     /* Turning OFF is never blocked, even while immobilized. */
     assert(mc_output_set(&eng, 5, false, MC_OUT_SRC_LOCAL) == MC_OUT_OK);
 
-    /* A non-ignition/starter channel is unaffected. */
-    cfg.channels[0].behaviour = MC_OUT_BEHAVIOUR_TOGGLE;
-    eng.config.channels[0].behaviour = MC_OUT_BEHAVIOUR_TOGGLE;
-    assert(mc_output_set(&eng, 0, true, MC_OUT_SRC_REMOTE) == MC_OUT_OK);
+    /* Every ordinary channel is blocked too, from either source. A locked
+     * bike whose headlight and horn still answered to anyone walking past
+     * was not immobilized in any sense a rider would recognise. */
+    for (uint8_t ch = 0; ch < MC_OUTPUT_COUNT; ch++) {
+        assert(mc_output_set(&eng, ch, true, MC_OUT_SRC_REMOTE) == MC_OUT_ERR_IMMOBILIZED);
+        assert(mc_output_set(&eng, ch, true, MC_OUT_SRC_LOCAL) == MC_OUT_ERR_IMMOBILIZED);
+        assert(mc_output_get_state(&eng, ch) == false);
+    }
 
     mc_output_set_immobilized(&eng, false);
     assert(mc_output_set(&eng, 5, true, MC_OUT_SRC_LOCAL) == MC_OUT_OK);
+    assert(mc_output_set(&eng, 0, true, MC_OUT_SRC_LOCAL) == MC_OUT_OK);
+}
+
+/* Hazards are the one control a locked bike keeps: a machine broken down at
+ * the roadside has to stay visible, and the rider may well have locked it
+ * before walking off for help. */
+static void test_hazards_still_work_while_immobilized(void)
+{
+    mc_output_config_t cfg;
+    mc_output_config_default(&cfg);
+    cfg.turn_flash_period_ms = 700;
+    cfg.channels[0].indicator = MC_INDICATOR_LEFT;
+    cfg.channels[0].hazard_member = true;
+    cfg.channels[1].indicator = MC_INDICATOR_RIGHT;
+    cfg.channels[1].hazard_member = true;
+
+    mc_output_hal_t hal = { .set = hal_noop, .ctx = NULL };
+    mc_output_engine_t eng;
+    mc_output_init(&eng, &cfg, hal);
+    mc_output_set_immobilized(&eng, true);
+
+    mc_output_hazard_press(&eng, 0);
+    assert(mc_output_hazard_active(&eng) == true);
+    assert(mc_output_get_state(&eng, 0) == true);
+    assert(mc_output_get_state(&eng, 1) == true);
+
+    /* ...but a hazard MEMBER on its own is still refused, so the exemption
+     * is the hazard control and not a hole around every channel that
+     * happens to be in the group. */
+    assert(mc_output_set(&eng, 0, true, MC_OUT_SRC_REMOTE) == MC_OUT_ERR_IMMOBILIZED);
+
+    mc_output_hazard_press(&eng, 0);
+    assert(mc_output_hazard_active(&eng) == false);
 }
 
 static void test_find_ignition_channel(void)
@@ -954,6 +991,149 @@ static void test_wire_status_reports_live_lock_state(void)
     assert(st->data[1 + 3] == MC_LOCK_LOCKED); /* byte 3 of the status payload */
 }
 
+/* --- 2026-08 immobilizer redesign --- */
+
+/* AGENTS.md #3 as amended: the phone may never be the only way in, but the
+ * non-phone method can be either the cheat-code or a wired ignition switch.
+ * A rider with an OEM key already has a physical fallback. */
+static void test_enable_accepts_ignition_switch_instead_of_cheatcode(void)
+{
+    mc_output_config_t out;
+    mc_output_config_default(&out);
+    out.channels[5].is_ignition = true;
+    out.channels[5].essential = true;
+
+    mc_lock_config_t cfg;
+    mc_lock_config_default(&cfg);
+    cfg.immobilizer_enabled = true;
+    cfg.methods_mask = MC_LOCK_METHOD_PHONE;
+
+    /* Phone alone: refused. */
+    assert(mc_lock_config_validate(&cfg, &out) & MC_LOCK_CFG_ENABLE_REQUIRES_FALLBACK);
+
+    /* An ignition switch is enough on its own — no cheat-code needed. */
+    cfg.methods_mask |= MC_LOCK_METHOD_IGNITION_SWITCH;
+    cfg.ignition_switch_input = 3;
+    assert(mc_lock_config_validate(&cfg, &out) == MC_LOCK_CFG_OK);
+
+    /* A cheat-code is equally enough on its own. */
+    cfg.methods_mask = MC_LOCK_METHOD_PHONE;
+    cfg.ignition_switch_input = -1;
+    cfg.cheatcode_set = true;
+    cfg.cheatcode_len = 4;
+    assert(mc_lock_config_validate(&cfg, &out) == MC_LOCK_CFG_OK);
+}
+
+/* A method bit pointing at no input is not a way in, so it must not satisfy
+ * the fallback requirement — that would enable the immobilizer with the phone
+ * as the only real key. */
+static void test_ignition_switch_without_an_input_is_not_a_fallback(void)
+{
+    mc_output_config_t out;
+    mc_output_config_default(&out);
+    out.channels[5].is_ignition = true;
+    out.channels[5].essential = true;
+
+    mc_lock_config_t cfg;
+    mc_lock_config_default(&cfg);
+    cfg.immobilizer_enabled = true;
+    cfg.methods_mask = MC_LOCK_METHOD_PHONE | MC_LOCK_METHOD_IGNITION_SWITCH;
+    cfg.ignition_switch_input = -1; /* bit set, nothing wired */
+
+    uint32_t flags = mc_lock_config_validate(&cfg, &out);
+    assert(flags & MC_LOCK_CFG_ENABLE_REQUIRES_FALLBACK);
+    assert(flags & MC_LOCK_CFG_BAD_IGNITION_SWITCH_INPUT);
+}
+
+/* An ignition output is still required: there is nothing to immobilize
+ * without one, whichever unlock methods are configured. */
+static void test_enable_still_requires_an_ignition_output(void)
+{
+    mc_output_config_t out;
+    mc_output_config_default(&out); /* no ignition channel */
+
+    mc_lock_config_t cfg;
+    mc_lock_config_default(&cfg);
+    cfg.immobilizer_enabled = true;
+    cfg.methods_mask = MC_LOCK_METHOD_PHONE | MC_LOCK_METHOD_IGNITION_SWITCH;
+    cfg.ignition_switch_input = 3;
+
+    assert(mc_lock_config_validate(&cfg, &out) &
+           MC_LOCK_CFG_ENABLE_REQUIRES_IGNITION_CHANNEL);
+}
+
+/* Unlocking turns the key: the bike is ready to start, rather than needing a
+ * second action the rider has no reason to expect. */
+static void test_unlock_energizes_the_ignition(void)
+{
+    lock_fixture_t fx;
+    fx_init_outputs(&fx);
+    /* A DRL that comes up with the key, to prove the ordinary ignition-on
+     * path runs rather than the flag being poked directly. */
+    fx.out_cfg.channels[2].on_with_ignition = true;
+    fx.output.config.channels[2].on_with_ignition = true;
+    fx_enable_with_cheatcode(&fx, 60000);
+
+    uint32_t t = 0;
+    enter_locked_via_grace(&fx, &t);
+    assert(fx.lock.state == MC_LOCK_ST_LOCKED);
+    assert(mc_output_get_state(&fx.output, 5) == false);
+
+    assert(mc_lock_request_unlock(&fx.lock, &fx.output, t) == MC_LOCK_RESULT_OK);
+    assert(fx.lock.state == MC_LOCK_ST_UNLOCKED);
+    assert(mc_output_get_state(&fx.output, 5) == true); /* ignition live */
+    assert(mc_output_get_state(&fx.output, 2) == true); /* DRL followed it */
+
+    /* Unlocking never cranks: the starter stays exactly where it was. */
+    assert(mc_output_get_state(&fx.output, 6) == false);
+}
+
+/* Locking makes the bike dark — not just ignition and starter. A headlight
+ * left on would otherwise burn all night on a bike that is "secured". */
+static void test_locking_turns_every_output_off(void)
+{
+    lock_fixture_t fx;
+    fx_init_outputs(&fx);
+    fx_enable_with_cheatcode(&fx, 60000);
+
+    /* Rider leaves an aux circuit and a work light on, ignition off. */
+    assert(mc_output_set(&fx.output, 0, true, MC_OUT_SRC_LOCAL) == MC_OUT_OK);
+    assert(mc_output_set(&fx.output, 1, true, MC_OUT_SRC_LOCAL) == MC_OUT_OK);
+
+    uint32_t t = 0;
+    enter_locked_via_grace(&fx, &t);
+
+    assert(fx.lock.state == MC_LOCK_ST_LOCKED);
+    for (uint8_t ch = 0; ch < MC_OUTPUT_COUNT; ch++) {
+        assert(mc_output_get_state(&fx.output, ch) == false);
+    }
+}
+
+/* ...except hazards that are actually running. Auto-locking after 60s parked
+ * must not put out the flashers on a bike abandoned at the roadside. */
+static void test_locking_leaves_running_hazards_alone(void)
+{
+    lock_fixture_t fx;
+    fx_init_outputs(&fx);
+    fx.out_cfg.channels[0].hazard_member = true;
+    fx.out_cfg.channels[1].hazard_member = true;
+    fx.out_cfg.turn_flash_period_ms = 700;
+    fx.output.config = fx.out_cfg;
+    fx_enable_with_cheatcode(&fx, 60000);
+
+    mc_output_hazard_press(&fx.output, 0);
+    assert(mc_output_hazard_active(&fx.output) == true);
+
+    uint32_t t = 0;
+    enter_locked_via_grace(&fx, &t);
+
+    assert(fx.lock.state == MC_LOCK_ST_LOCKED);
+    assert(mc_output_get_state(&fx.output, 0) == true);
+    assert(mc_output_get_state(&fx.output, 1) == true);
+    assert(mc_output_hazard_active(&fx.output) == true);
+}
+
+
 int main(void)
 {
     test_config_validate();
@@ -998,6 +1178,13 @@ int main(void)
     test_transfer_ownership_resets_everything();
 
     test_output_blocks_ignition_and_starter_while_immobilized();
+    test_hazards_still_work_while_immobilized();
+    test_enable_accepts_ignition_switch_instead_of_cheatcode();
+    test_ignition_switch_without_an_input_is_not_a_fallback();
+    test_enable_still_requires_an_ignition_output();
+    test_unlock_energizes_the_ignition();
+    test_locking_turns_every_output_off();
+    test_locking_leaves_running_hazards_alone();
     test_find_ignition_channel();
 
     test_serialize_deserialize_roundtrip();

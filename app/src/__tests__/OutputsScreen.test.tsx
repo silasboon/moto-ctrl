@@ -1,8 +1,10 @@
 /**
  * Render tests for OutputsScreen. Narrow on purpose: they prove the screen
- * writes the exact schema-6 shape the firmware expects, and that the two
- * at-most-one roles can't be set on two channels at once — the firmware
- * rejects such a config outright, so the UI must not let you build one.
+ * writes the exact schema-8 shape the firmware expects, and that the
+ * constraints the firmware validates — at-most-one ignition/starter,
+ * reciprocal alternating pairs — can't be violated from the UI at all. A
+ * config that only fails on save is a worse experience than one the screen
+ * refuses to build.
  */
 import React from 'react';
 import { Alert } from 'react-native';
@@ -20,6 +22,11 @@ import { defaultConfig, type DeviceConfig } from '../protocol/types';
 function makeClient(initial?: DeviceConfig) {
   const calls = { writes: [] as DeviceConfig[] };
   const client = {
+    /* OutputsScreen now carries the live output switches, so it subscribes
+     * to status the way the dashboard used to. */
+    getLastStatus: jest.fn(() => null),
+    onStatus: jest.fn(() => () => {}),
+    setOutput: jest.fn(async () => {}),
     configRead: jest.fn(async () => initial ?? defaultConfig()),
     configWrite: jest.fn(async (cfg: DeviceConfig) => {
       calls.writes.push(JSON.parse(JSON.stringify(cfg)) as DeviceConfig);
@@ -47,7 +54,7 @@ async function mount(client: MotoClient) {
 }
 
 describe('OutputsScreen', () => {
-  test('writes the schema-6 channel shape, with no legacy keys', async () => {
+  test('writes the schema-8 channel shape, with no legacy keys', async () => {
     const { client, calls } = makeClient();
     const tree = await mount(client);
     await act(async () => {
@@ -55,7 +62,7 @@ describe('OutputsScreen', () => {
     });
 
     const written = calls.writes[0]!;
-    expect(written.schema_version).toBe(6);
+    expect(written.schema_version).toBe(8);
     const ch = written.outputs.channels[0]!;
     expect(ch).toMatchObject({
       name: '',
@@ -66,6 +73,8 @@ describe('OutputsScreen', () => {
       is_brake: false,
       indicator: 'none',
       hazard_member: false,
+      on_with_ignition: false,
+      alternate_channel: -1,
     });
     // The v5 taxonomy must be gone from the wire entirely.
     expect(ch).not.toHaveProperty('function');
@@ -128,6 +137,59 @@ describe('OutputsScreen', () => {
       byLabel(tree, 'Save').props.onPress();
     });
     expect(calls.writes[0]!.outputs.channels[2]!.name).toBe('Heated Grips');
+  });
+
+  /* An asymmetric pair is a config the firmware rejects outright
+   * (MC_OUT_CFG_BAD_ALTERNATE), and the failure mode it prevents is both
+   * beams lit at once — so the screen writes both sides of a pair together
+   * rather than letting the rider build a half-link. */
+  test('pairing two channels writes the link on both of them', async () => {
+    const { client, calls } = makeClient();
+    const tree = await mount(client);
+
+    await act(async () => {
+      byLabel(tree, 'Output 3, On / off toggle').props.onPress();
+    });
+    await act(async () => {
+      byLabel(tree, 'Alternates with: None').props.onPress();
+    });
+    await act(async () => {
+      byLabel(tree, 'Output 5').props.onPress();
+    });
+    await act(async () => {
+      byLabel(tree, 'Save').props.onPress();
+    });
+
+    const channels = calls.writes[0]!.outputs.channels;
+    expect(channels[2]!.alternate_channel).toBe(4);
+    expect(channels[4]!.alternate_channel).toBe(2);
+  });
+
+  test('re-pairing a channel releases the partner it is leaving', async () => {
+    const cfg = defaultConfig();
+    cfg.outputs.channels[2]!.alternate_channel = 4;
+    cfg.outputs.channels[4]!.alternate_channel = 2;
+    const { client, calls } = makeClient(cfg);
+    const tree = await mount(client);
+
+    await act(async () => {
+      byLabel(tree, 'Output 3, On / off toggle').props.onPress();
+    });
+    await act(async () => {
+      byLabel(tree, 'Alternates with: Output 5').props.onPress();
+    });
+    await act(async () => {
+      byLabel(tree, 'None').props.onPress();
+    });
+    await act(async () => {
+      byLabel(tree, 'Save').props.onPress();
+    });
+
+    const channels = calls.writes[0]!.outputs.channels;
+    expect(channels[2]!.alternate_channel).toBe(-1);
+    /* The abandoned partner must be released too, or it keeps a one-way
+     * link to a channel that no longer points back. */
+    expect(channels[4]!.alternate_channel).toBe(-1);
   });
 
   /* Everything on this screen is local until Save, and re-entering a set of

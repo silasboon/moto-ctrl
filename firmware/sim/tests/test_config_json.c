@@ -2,6 +2,7 @@
 
 #include <assert.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 static void test_default_roundtrip(void)
@@ -38,6 +39,10 @@ static void test_modified_roundtrip(void)
     cfg.outputs.channels[7].behaviour = MC_OUT_BEHAVIOUR_TOGGLE;
     cfg.outputs.channels[7].behaviour = MC_OUT_BEHAVIOUR_TOGGLE;
     cfg.outputs.channels[7].pwm_duty_pct = 60;
+    /* schema_version 7. */
+    cfg.outputs.channels[7].on_with_ignition = true;
+    cfg.outputs.channels[8].alternate_channel = 9;
+    cfg.outputs.channels[9].alternate_channel = 8;
     cfg.outputs.brake_switch_input = 3;
     cfg.outputs.turn_auto_cancel_ms = 15000;
     cfg.outputs.turn_flash_period_ms = 500;
@@ -382,6 +387,106 @@ static void test_v5_functions_migrate_to_role_flags(void)
     assert(c.outputs.channels[7].pwm_duty_pct == 40);
 }
 
+/* schema_version 7 fields survive a round trip, and a pre-v7 document (one
+ * with the v6 role flags but no v7 keys) keeps the defaults that mean exactly
+ * what it meant: nothing came on with the ignition, no channel had a partner.
+ * That is why v7 needed no migration pass. */
+static void test_v7_fields_roundtrip_and_default_on_older_documents(void)
+{
+    mc_config_t cfg;
+    mc_config_default(&cfg);
+    cfg.outputs.channels[2].on_with_ignition = true;
+    cfg.outputs.channels[3].alternate_channel = 4;
+    cfg.outputs.channels[4].alternate_channel = 3;
+
+    char *json = mc_config_to_json(&cfg);
+    assert(json != NULL);
+
+    mc_config_t back;
+    assert(mc_config_from_json(json, strlen(json), &back) == MC_CONFIG_OK);
+    assert(back.outputs.channels[2].on_with_ignition);
+    assert(back.outputs.channels[3].alternate_channel == 4);
+    assert(back.outputs.channels[4].alternate_channel == 3);
+    assert(back.outputs.channels[5].alternate_channel == -1);
+    assert(mc_output_config_validate(&back.outputs) == MC_OUT_CFG_OK);
+    free(json);
+
+    /* A v6 document: role flags present, v7 keys absent. */
+    const char *v6 =
+        "{ \"schema_version\": 6, \"outputs\": { \"channels\": ["
+        "  { \"behaviour\": \"toggle\", \"is_ignition\": true },"
+        "  { \"behaviour\": \"toggle\", \"essential\": true }"
+        "] } }";
+    mc_config_t older;
+    assert(mc_config_from_json(v6, strlen(v6), &older) == MC_CONFIG_OK);
+    assert(!older.outputs.channels[0].on_with_ignition);
+    assert(!older.outputs.channels[1].on_with_ignition);
+    assert(older.outputs.channels[0].alternate_channel == -1);
+    assert(older.outputs.channels[1].alternate_channel == -1);
+}
+
+/* A hand-edited or truncated document naming a nonexistent partner must not
+ * make the whole config unloadable — it is clamped to "no partner", which
+ * validation then accepts. Asymmetry is still caught by validation. */
+static void test_out_of_range_alternate_channel_is_dropped(void)
+{
+    const char *json =
+        "{ \"schema_version\": 7, \"outputs\": { \"channels\": ["
+        "  { \"behaviour\": \"toggle\", \"alternate_channel\": 99 },"
+        "  { \"behaviour\": \"toggle\", \"alternate_channel\": 1 }"
+        "] } }";
+    mc_config_t c;
+    assert(mc_config_from_json(json, strlen(json), &c) == MC_CONFIG_OK);
+    assert(c.outputs.channels[0].alternate_channel == -1); /* out of range */
+    assert(c.outputs.channels[1].alternate_channel == -1); /* pointed at itself */
+    assert(mc_output_config_validate(&c.outputs) == MC_OUT_CFG_OK);
+}
+
+
+/* schema_version 8: the board nickname. Absent from every earlier document,
+ * and empty means the factory default — so, like v7, no migration pass. */
+static void test_device_name_roundtrip_and_default(void)
+{
+    mc_config_t cfg;
+    mc_config_default(&cfg);
+    /* Unset out of the box, and read back as the factory name. */
+    assert(cfg.device_name[0] == '\0');
+    assert(strcmp(mc_config_effective_device_name(&cfg), MC_DEVICE_NAME_DEFAULT) == 0);
+
+    strcpy(cfg.device_name, "Bonneville");
+    char *json = mc_config_to_json(&cfg);
+    assert(json != NULL);
+
+    mc_config_t back;
+    assert(mc_config_from_json(json, strlen(json), &back) == MC_CONFIG_OK);
+    assert(strcmp(back.device_name, "Bonneville") == 0);
+    assert(strcmp(mc_config_effective_device_name(&back), "Bonneville") == 0);
+    free(json);
+
+    /* A pre-v8 document leaves it unset, which reads as the factory name —
+     * exactly what such a board was called. */
+    const char *v7 = "{ \"schema_version\": 7, \"outputs\": { \"channels\": [] } }";
+    mc_config_t older;
+    assert(mc_config_from_json(v7, strlen(v7), &older) == MC_CONFIG_OK);
+    assert(older.device_name[0] == '\0');
+    assert(strcmp(mc_config_effective_device_name(&older), MC_DEVICE_NAME_DEFAULT) == 0);
+}
+
+/* An over-long name is truncated, not rejected: a cosmetic overflow must not
+ * cost the rider their whole config, same as channel and button names. */
+static void test_oversized_device_name_truncated(void)
+{
+    char json[512];
+    snprintf(json, sizeof(json),
+             "{ \"schema_version\": 8, \"device_name\": "
+             "\"012345678901234567890123456789ABCDEF\" }");
+    mc_config_t c;
+    assert(mc_config_from_json(json, strlen(json), &c) == MC_CONFIG_OK);
+    assert(strlen(c.device_name) == MC_DEVICE_NAME_MAX - 1);
+    assert(strncmp(c.device_name, "012345678901234567890123", MC_DEVICE_NAME_MAX - 1) == 0);
+}
+
+
 int main(void)
 {
     test_default_roundtrip();
@@ -401,5 +506,9 @@ int main(void)
     test_oversized_action_list_clamped();
     test_momentary_roundtrip_and_v4_default();
     test_worst_case_config_fits_json_max();
+    test_v7_fields_roundtrip_and_default_on_older_documents();
+    test_out_of_range_alternate_channel_is_dropped();
+    test_device_name_roundtrip_and_default();
+    test_oversized_device_name_truncated();
     return 0;
 }

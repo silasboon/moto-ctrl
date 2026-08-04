@@ -16,7 +16,6 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import {
   ActivityIndicator,
-  ScrollView,
   StyleSheet,
   Text,
   TouchableOpacity,
@@ -35,6 +34,7 @@ import {
   fetchUpdateManifest,
   isNewerVersion,
 } from '../update/updateCheck';
+import { Screen } from '../ui/components';
 import { colors } from '../ui/theme';
 
 interface Props {
@@ -152,14 +152,7 @@ export function FirmwareUpdateScreen({
   }
 
   return (
-    <ScrollView style={styles.container} contentContainerStyle={styles.content}>
-      <View style={styles.header}>
-        <Text style={styles.title}>Firmware Update</Text>
-        <TouchableOpacity onPress={onDone}>
-          <Text style={styles.link}>Done</Text>
-        </TouchableOpacity>
-      </View>
-
+    <Screen title="Firmware Update" onBack={onDone}>
       <Text style={styles.hint}>Current device firmware: {currentVersion}</Text>
 
       {deviceOta &&
@@ -266,7 +259,7 @@ export function FirmwareUpdateScreen({
         </View>
       )}
       {error && phase !== 'error' && <Text style={styles.error}>{error}</Text>}
-    </ScrollView>
+    </Screen>
   );
 }
 

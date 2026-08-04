@@ -1,4 +1,4 @@
-package com.mototrl.app
+package com.motoctrl.app
 
 import com.facebook.react.ReactActivity
 import com.facebook.react.ReactActivityDelegate

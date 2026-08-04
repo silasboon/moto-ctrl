@@ -14,6 +14,8 @@ import React from 'react';
 import {
   ActivityIndicator,
   Alert,
+  Animated,
+  Easing,
   BackHandler,
   Keyboard,
   KeyboardAvoidingView,
@@ -32,6 +34,7 @@ import {
   type ViewStyle,
 } from 'react-native';
 
+import { useNavGuard } from './NavGuard';
 import {
   colors,
   elevation,
@@ -81,6 +84,35 @@ const ScrollHostContext = React.createContext<
   ((input: TextInput) => void) | null
 >(null);
 
+/* How much of the bottom of every scrolling screen is covered by app chrome —
+ * in practice the tab bar, which overlays content rather than sitting in the
+ * layout flow (that overlap is what gives the glass something to refract).
+ * Content has to be padded by it or the last row of every screen ends up
+ * permanently trapped underneath. Zero outside a provider, which is the
+ * pairing screen and the test renderer. */
+const BottomInsetContext = React.createContext(0);
+
+/** The chrome-covered height at the bottom of the screen — see
+ * BottomInsetContext. For screens that manage their own scrolling (a
+ * FlatList) and so don't go through KeyboardAwareScroll. */
+export function useBottomInset(): number {
+  return React.useContext(BottomInsetContext);
+}
+
+export function BottomInsetProvider({
+  value,
+  children,
+}: {
+  value: number;
+  children: React.ReactNode;
+}): React.JSX.Element {
+  return (
+    <BottomInsetContext.Provider value={value}>
+      {children}
+    </BottomInsetContext.Provider>
+  );
+}
+
 /** Gap left below a revealed field, so its hint text stays readable rather
  * than sitting exactly on the keyboard's edge. */
 const KEYBOARD_REVEAL_GAP = 24;
@@ -115,6 +147,7 @@ export function KeyboardAwareScroll({
   ...props
 }: ScrollViewProps): React.JSX.Element {
   const ref = React.useRef<ScrollView | null>(null);
+  const bottomInset = React.useContext(BottomInsetContext);
   /** Live scroll position — the reveal scrolls relative to it, and
    * ScrollView has no way to read it back. */
   const offset = React.useRef(0);
@@ -189,7 +222,7 @@ export function KeyboardAwareScroll({
            * gap the reveal wants to leave. */
           contentContainerStyle={[
             contentContainerStyle,
-            styles.keyboardScrollBody,
+            { paddingBottom: space.xxl + bottomInset },
           ]}
           {...props}
         >
@@ -219,6 +252,7 @@ export function Screen({
   children: React.ReactNode;
   scroll?: boolean;
 }): React.JSX.Element {
+  const bottomInset = useBottomInset();
   const header = (
     <View style={styles.screenHeader}>
       <View style={styles.screenHeaderMain}>
@@ -245,7 +279,9 @@ export function Screen({
     return (
       <View style={styles.screen}>
         {header}
-        <View style={styles.screenBodyStatic}>{children}</View>
+        <View style={[styles.screenBodyStatic, { paddingBottom: bottomInset }]}>
+          {children}
+        </View>
       </View>
     );
   }
@@ -308,6 +344,7 @@ export function Button({
   label,
   onPress,
   tone = 'primary',
+  size = 'normal',
   disabled,
   busy,
   style,
@@ -316,6 +353,9 @@ export function Button({
   label: string;
   onPress: () => void;
   tone?: ButtonTone;
+  /** `large` is for the one or two controls a screen exists for — sized to
+   * be hit without looking, with a glove on. */
+  size?: 'normal' | 'large';
   disabled?: boolean;
   busy?: boolean;
   style?: ViewStyle;
@@ -331,6 +371,7 @@ export function Button({
       accessibilityState={{ disabled: !!isDisabled, busy: !!busy }}
       style={({ pressed }) => [
         styles.button,
+        size === 'large' && styles.buttonLarge,
         toneStyles[tone].container,
         pressed && !isDisabled && styles.buttonPressed,
         isDisabled && styles.disabled,
@@ -345,7 +386,11 @@ export function Button({
         />
       )}
       <Text
-        style={[styles.buttonLabel, toneStyles[tone].label]}
+        style={[
+          styles.buttonLabel,
+          size === 'large' && styles.buttonLabelLarge,
+          toneStyles[tone].label,
+        ]}
         numberOfLines={1}
       >
         {label}
@@ -616,11 +661,23 @@ export function Input({
 interface NumericProps {
   value: number;
   onChangeValue: (value: number) => void;
-  /** Clamped on commit. Omitting `min` also permits a leading minus sign. */
+  /** Clamped on commit, in STORED units (see `scale`). Omitting `min` also
+   * permits a leading minus sign. */
   min?: number;
   max?: number;
   /** Accept a decimal point. Integer-only otherwise. */
   decimal?: boolean;
+  /**
+   * Multiplier from what the rider types to what gets stored. `scale={1000}`
+   * shows a millisecond value in seconds: 30000 displays as 30, and typing
+   * 1.5 stores 1500.
+   *
+   * The firmware works in milliseconds everywhere and that isn't changing —
+   * this is a display concern only, so nothing on the wire or in the config
+   * schema moves. Worth it because "30000" for a turn auto-cancel is a
+   * number nobody reads at a glance, while "30" is obviously half a minute.
+   */
+  scale?: number;
 }
 
 function useNumericDraft({
@@ -629,20 +686,29 @@ function useNumericDraft({
   min,
   max,
   decimal,
+  scale = 1,
 }: NumericProps): Pick<
   TextInputProps,
   'value' | 'onChangeText' | 'onBlur' | 'keyboardType'
 > {
   const [draft, setDraft] = React.useState<string | null>(null);
   const signed = min === undefined || min < 0;
+  /* A scaled field is fractional by nature — 1.5 s has to be expressible, or
+   * the scaling has quietly coarsened what the rider can set. */
+  const allowsDecimal = decimal || scale !== 1;
+  /* Trailing zeros stripped: 30000ms reads "30", not "30.000". */
+  const shown = (stored: number): string =>
+    scale === 1
+      ? String(stored)
+      : String(Number((stored / scale).toFixed(3)));
 
   const onChangeText = (raw: string): void => {
     /* Phone number-pads vary by locale and manufacturer; strip anything that
      * can't belong rather than trusting keyboardType to have excluded it. */
-    let cleaned = raw.replace(decimal ? /[^0-9.-]/g : /[^0-9-]/g, '');
+    let cleaned = raw.replace(allowsDecimal ? /[^0-9.-]/g : /[^0-9-]/g, '');
     if (!signed) cleaned = cleaned.replace(/-/g, '');
     else cleaned = cleaned.replace(/(?!^)-/g, '');
-    if (decimal) {
+    if (allowsDecimal) {
       const firstDot = cleaned.indexOf('.');
       if (firstDot >= 0) {
         cleaned =
@@ -652,21 +718,23 @@ function useNumericDraft({
     }
     setDraft(cleaned);
 
-    const parsed = decimal ? parseFloat(cleaned) : parseInt(cleaned, 10);
+    const parsed = allowsDecimal ? parseFloat(cleaned) : parseInt(cleaned, 10);
     if (Number.isNaN(parsed)) return; // "", "-", "." — nothing to commit yet
-    let next = parsed;
+    /* Rounded because 0.1 * 1000 is 100.00000000000001 in binary floating
+     * point, and a stored duration has to be a whole millisecond. */
+    let next = scale === 1 ? parsed : Math.round(parsed * scale);
     if (min !== undefined) next = Math.max(min, next);
     if (max !== undefined) next = Math.min(max, next);
     onChangeValue(next);
   };
 
   return {
-    value: draft ?? String(value),
+    value: draft ?? shown(value),
     onChangeText,
     onBlur: () => setDraft(null),
     /* number-pad has no minus key, so a field that accepts one needs the
      * fuller numeric pad. */
-    keyboardType: decimal || signed ? 'numeric' : 'number-pad',
+    keyboardType: allowsDecimal || signed ? 'numeric' : 'number-pad',
   };
 }
 
@@ -677,6 +745,7 @@ export function NumberInput({
   min,
   max,
   decimal,
+  scale,
   style,
   ...inputProps
 }: NumericProps &
@@ -684,7 +753,14 @@ export function NumberInput({
     TextInputProps,
     'value' | 'onChangeText' | 'onBlur' | 'keyboardType'
   >): React.JSX.Element {
-  const numeric = useNumericDraft({ value, onChangeValue, min, max, decimal });
+  const numeric = useNumericDraft({
+    value,
+    onChangeValue,
+    min,
+    max,
+    decimal,
+    scale,
+  });
   const reveal = useKeyboardReveal(inputProps.onFocus);
   return (
     <TextInput
@@ -707,13 +783,21 @@ export function NumberField({
   min,
   max,
   decimal,
+  scale,
   ...inputProps
 }: { label?: string; hint?: string } & NumericProps &
   Omit<
     TextInputProps,
     'value' | 'onChangeText' | 'onBlur' | 'keyboardType'
   >): React.JSX.Element {
-  const numeric = useNumericDraft({ value, onChangeValue, min, max, decimal });
+  const numeric = useNumericDraft({
+    value,
+    onChangeValue,
+    min,
+    max,
+    decimal,
+    scale,
+  });
   const reveal = useKeyboardReveal(inputProps.onFocus);
   return (
     <View style={styles.field}>
@@ -844,11 +928,19 @@ export function confirmDiscard(onDiscard: () => void): void {
 
 /**
  * Guards leaving a screen while `dirty`. Returns the handler to pass to
- * `Screen`'s `onBack`, and also intercepts Android's hardware/gesture back —
- * which otherwise bypasses the on-screen chevron entirely and, in this app,
- * would drop straight out to the launcher.
+ * `Screen`'s `onBack`.
+ *
+ * Covers all the ways off a screen, because a guard that only catches one of
+ * them is barely a guard:
+ *   - the Back chevron, via the returned handler;
+ *   - Android's hardware/gesture back, which otherwise bypasses the chevron
+ *     entirely and, in this app, would drop straight out to the launcher;
+ *   - a tab-bar tap, via NavGuard — the bar stays visible on detail screens,
+ *     which makes this the easiest of the three to hit by accident.
  */
 export function useLeaveGuard(dirty: boolean, onLeave: () => void): () => void {
+  const nav = useNavGuard();
+
   const leave = React.useCallback(() => {
     if (dirty) confirmDiscard(onLeave);
     else onLeave();
@@ -862,7 +954,132 @@ export function useLeaveGuard(dirty: boolean, onLeave: () => void): () => void {
     return () => sub.remove();
   }, [leave]);
 
+  /* Registered even when clean, so the shell always asks and this hook stays
+   * the single place that knows whether there is anything to lose. */
+  React.useEffect(() => {
+    if (!nav) return undefined;
+    nav.register(proceed => {
+      if (dirty) confirmDiscard(proceed);
+      else proceed();
+    });
+    return () => nav.register(null);
+  }, [nav, dirty]);
+
   return leave;
+}
+
+/* --- skeletons ---
+ *
+ * A spinner says "something is happening"; a skeleton says "a list of cards
+ * is about to appear here, roughly this tall". On these screens the load is a
+ * BLE round trip that takes a noticeable moment (config comes back in 128-byte
+ * chunks), so the shape is worth showing — the layout doesn't jump when the
+ * real content lands, and a rider can already see whether they're on the
+ * screen they meant to open.
+ *
+ * One shared pulse driver rather than one Animated.Value per block, so a
+ * screenful of skeletons stays in phase and costs a single animation. */
+
+function useSkeletonPulse(): Animated.Value {
+  const pulse = React.useRef(new Animated.Value(0)).current;
+  React.useEffect(() => {
+    const loop = Animated.loop(
+      Animated.sequence([
+        Animated.timing(pulse, {
+          toValue: 1,
+          duration: 800,
+          easing: Easing.inOut(Easing.quad),
+          useNativeDriver: true,
+        }),
+        Animated.timing(pulse, {
+          toValue: 0,
+          duration: 800,
+          easing: Easing.inOut(Easing.quad),
+          useNativeDriver: true,
+        }),
+      ]),
+    );
+    loop.start();
+    return () => loop.stop();
+  }, [pulse]);
+  return pulse;
+}
+
+/** A single placeholder block. `width` accepts a percentage string so rows
+ * can be ragged, which reads as text far better than a full-width bar. */
+export function SkeletonBlock({
+  width = '100%',
+  height = 12,
+  style,
+}: {
+  width?: number | `${number}%`;
+  height?: number;
+  style?: ViewStyle;
+}): React.JSX.Element {
+  const pulse = useSkeletonPulse();
+  return (
+    <Animated.View
+      accessibilityElementsHidden
+      importantForAccessibility="no"
+      style={[
+        styles.skeletonBlock,
+        {
+          width,
+          height,
+          opacity: pulse.interpolate({
+            inputRange: [0, 1],
+            outputRange: [0.35, 0.8],
+          }),
+        },
+        style,
+      ]}
+    />
+  );
+}
+
+/** A card-shaped placeholder: a heading line and a couple of shorter ones. */
+export function SkeletonCard({
+  lines = 2,
+}: {
+  lines?: number;
+}): React.JSX.Element {
+  return (
+    <Card>
+      <SkeletonBlock width="55%" height={14} />
+      {Array.from({ length: lines }).map((_, i) => (
+        <SkeletonBlock key={i} width={i % 2 === 0 ? '85%' : '65%'} />
+      ))}
+    </Card>
+  );
+}
+
+/**
+ * Whole-screen loading state, inside the normal Screen frame so the title and
+ * the Back chevron are live immediately — a rider who opened the wrong screen
+ * shouldn't have to wait for it to load before they can leave it.
+ */
+export function SkeletonScreen({
+  title,
+  onBack,
+  cards = 3,
+  lines = 2,
+}: {
+  title: string;
+  onBack?: () => void;
+  cards?: number;
+  lines?: number;
+}): React.JSX.Element {
+  return (
+    <Screen title={title} onBack={onBack}>
+      <View accessibilityRole="progressbar" accessibilityLabel="Loading">
+        {Array.from({ length: cards }).map((_, i) => (
+          <View key={i} style={styles.skeletonCardGap}>
+            <SkeletonCard lines={lines} />
+          </View>
+        ))}
+      </View>
+    </Screen>
+  );
 }
 
 export function Loading({ label }: { label?: string }): React.JSX.Element {
@@ -958,10 +1175,6 @@ const badgeTones = {
 } as const;
 
 const styles = StyleSheet.create({
-  /* Must stay larger than KEYBOARD_REVEAL_GAP — see the comment where it's
-   * applied. */
-  keyboardScrollBody: { paddingBottom: space.xxl },
-
   screen: { flex: 1, backgroundColor: colors.bg },
   screenHeader: {
     flexDirection: 'row',
@@ -1026,8 +1239,10 @@ const styles = StyleSheet.create({
     paddingHorizontal: space.lg,
     gap: space.sm,
   },
+  buttonLarge: { minHeight: 68, borderRadius: radius.lg },
   buttonPressed: { opacity: 0.8 },
   buttonLabel: { fontSize: 15, fontWeight: '600' },
+  buttonLabelLarge: { fontSize: 19, fontWeight: '700', letterSpacing: 0.2 },
   buttonSpinner: { marginRight: 0 },
   disabled: { opacity: 0.4 },
 
@@ -1145,6 +1360,12 @@ const styles = StyleSheet.create({
   empty: { alignItems: 'center', padding: space.xl, gap: space.xs },
   emptyTitle: { ...type.body, color: colors.textMuted, fontWeight: '600' },
   emptyBody: { textAlign: 'center' },
+
+  skeletonBlock: {
+    backgroundColor: colors.raisedHover,
+    borderRadius: radius.sm,
+  },
+  skeletonCardGap: { marginBottom: space.md },
 
   loading: {
     flex: 1,
