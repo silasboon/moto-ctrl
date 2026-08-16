@@ -84,34 +84,11 @@ const ScrollHostContext = React.createContext<
   ((input: TextInput) => void) | null
 >(null);
 
-/* How much of the bottom of every scrolling screen is covered by app chrome —
- * in practice the tab bar, which overlays content rather than sitting in the
- * layout flow (that overlap is what gives the glass something to refract).
- * Content has to be padded by it or the last row of every screen ends up
- * permanently trapped underneath. Zero outside a provider, which is the
- * pairing screen and the test renderer. */
-const BottomInsetContext = React.createContext(0);
-
-/** The chrome-covered height at the bottom of the screen — see
- * BottomInsetContext. For screens that manage their own scrolling (a
- * FlatList) and so don't go through KeyboardAwareScroll. */
-export function useBottomInset(): number {
-  return React.useContext(BottomInsetContext);
-}
-
-export function BottomInsetProvider({
-  value,
-  children,
-}: {
-  value: number;
-  children: React.ReactNode;
-}): React.JSX.Element {
-  return (
-    <BottomInsetContext.Provider value={value}>
-      {children}
-    </BottomInsetContext.Provider>
-  );
-}
+/** Fixed bottom padding for every scrolling screen's content, so the last row
+ * clears the home-indicator/gesture-bar safe area with some breathing room.
+ * Used to also account for the bottom tab bar (an overlay, not part of the
+ * layout flow), back when there was one — now it's just a constant. */
+const SCREEN_BOTTOM_PADDING = space.xxl;
 
 /** Gap left below a revealed field, so its hint text stays readable rather
  * than sitting exactly on the keyboard's edge. */
@@ -147,7 +124,6 @@ export function KeyboardAwareScroll({
   ...props
 }: ScrollViewProps): React.JSX.Element {
   const ref = React.useRef<ScrollView | null>(null);
-  const bottomInset = React.useContext(BottomInsetContext);
   /** Live scroll position — the reveal scrolls relative to it, and
    * ScrollView has no way to read it back. */
   const offset = React.useRef(0);
@@ -222,7 +198,7 @@ export function KeyboardAwareScroll({
            * gap the reveal wants to leave. */
           contentContainerStyle={[
             contentContainerStyle,
-            { paddingBottom: space.xxl + bottomInset },
+            { paddingBottom: SCREEN_BOTTOM_PADDING },
           ]}
           {...props}
         >
@@ -252,7 +228,6 @@ export function Screen({
   children: React.ReactNode;
   scroll?: boolean;
 }): React.JSX.Element {
-  const bottomInset = useBottomInset();
   const header = (
     <View style={styles.screenHeader}>
       <View style={styles.screenHeaderMain}>
@@ -279,7 +254,12 @@ export function Screen({
     return (
       <View style={styles.screen}>
         {header}
-        <View style={[styles.screenBodyStatic, { paddingBottom: bottomInset }]}>
+        <View
+          style={[
+            styles.screenBodyStatic,
+            { paddingBottom: SCREEN_BOTTOM_PADDING },
+          ]}
+        >
           {children}
         </View>
       </View>
@@ -395,6 +375,35 @@ export function Button({
       >
         {label}
       </Text>
+    </Pressable>
+  );
+}
+
+/** A circular, glyph-only button — the Ride screen's Settings affordance.
+ * A single Unicode character rather than an icon font/SVG: same reasoning as
+ * TabBar's text-only tabs (an icon set is a native dependency or a pile of
+ * hand-drawn Views), just for one glyph instead of four words. */
+export function RoundIconButton({
+  glyph,
+  onPress,
+  accessibilityLabel,
+}: {
+  glyph: string;
+  onPress: () => void;
+  accessibilityLabel: string;
+}): React.JSX.Element {
+  return (
+    <Pressable
+      onPress={onPress}
+      hitSlop={HIT_SLOP}
+      accessibilityRole="button"
+      accessibilityLabel={accessibilityLabel}
+      style={({ pressed }) => [
+        styles.roundIconButton,
+        pressed && styles.buttonPressed,
+      ]}
+    >
+      <Text style={styles.roundIconGlyph}>{glyph}</Text>
     </Pressable>
   );
 }
@@ -1245,6 +1254,18 @@ const styles = StyleSheet.create({
   buttonLabelLarge: { fontSize: 19, fontWeight: '700', letterSpacing: 0.2 },
   buttonSpinner: { marginRight: 0 },
   disabled: { opacity: 0.4 },
+
+  roundIconButton: {
+    width: MIN_TOUCH,
+    height: MIN_TOUCH,
+    borderRadius: radius.pill,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: colors.raised,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: colors.border,
+  },
+  roundIconGlyph: { fontSize: 20, color: colors.text },
 
   chip: {
     minHeight: 34,

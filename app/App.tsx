@@ -1,38 +1,33 @@
 /**
  * MOTO-CTRL companion app.
  *
- * Navigation is local component state, not a router — the shape here is a
- * bottom tab bar over a single level of drill-down, which react-navigation
- * and its native peers would be a lot of dependency to express (see
- * app/NATIVE_SETUP.md).
+ * Navigation is local component state, not a router — the shape here is two
+ * levels of drill-down, which react-navigation and its native peers would be
+ * a lot of dependency to express (see app/NATIVE_SETUP.md).
  *
- * Four tabs, grouped by what a rider is doing rather than by screen:
+ * Ride is the landing screen and the only thing shown on launch/reconnect —
+ * it's the only screen anyone opens with the engine warm, so it gets the
+ * whole screen with no menu competing for it. Everything else (board name,
+ * output channels, button bindings, paired phones, immobilizer, diagnostics,
+ * firmware, event log) lives one tap away behind the round settings button
+ * in Ride's title bar, on the Settings screen — grouped into named sections
+ * (Configuration / Device) rather than flattened into one undifferentiated
+ * list, since those groupings are still meaningful even without being
+ * separate tabs. Each section row pushes one detail screen deep, same as
+ * before.
  *
- *   Ride      live control — the only tab anyone opens with the engine warm
- *   Setup     board name, output channels, button bindings
- *   Security  paired phones, immobilizer
- *   Settings  board info, diagnostics, firmware, event log
- *
- * The Ride tab is the landing screen and holds no menu. The other three are
- * lists that push one detail screen deep.
- *
- * The tab bar stays visible at every level, including on detail screens. That
- * means a rider can leave a half-edited config by tapping a tab rather than
- * Back, so tab switches are routed through NavGuard — the mounted screen's
- * `useLeaveGuard` gets to confirm first, exactly as it does for Back. The bar
- * also overlays the content rather than sitting above it in the layout, which
- * is what gives the Liquid Glass material something to refract; screens are
- * inset by `useTabBarHeight()` to compensate.
+ * A rider can leave a half-edited config by swiping/tapping back rather than
+ * using the screen's own Back chevron, so every way out the shell itself
+ * drives (edge-swipe) is routed through NavGuard — the mounted screen's
+ * `useLeaveGuard` gets to confirm first, exactly as its own chevron does.
  */
 import React, { useCallback, useEffect, useState } from 'react';
 import { StatusBar, StyleSheet, View } from 'react-native';
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 
 import { colors } from './src/ui/theme';
-import { BottomInsetProvider } from './src/ui/components';
 import { EdgeSwipeBack } from './src/ui/EdgeSwipeBack';
 import { NavGuardProvider, useNavGuard } from './src/ui/NavGuard';
-import { TabBar, useTabBarHeight, type TabDef } from './src/ui/TabBar';
 
 import { BoardInfoCard } from './src/screens/BoardInfoCard';
 import { BoardScreen } from './src/screens/BoardScreen';
@@ -45,11 +40,9 @@ import { KeysScreen } from './src/screens/KeysScreen';
 import { LockScreen } from './src/screens/LockScreen';
 import { PairingScreen } from './src/screens/PairingScreen';
 import { OutputsScreen } from './src/screens/OutputsScreen';
-import { SectionScreen } from './src/screens/SectionScreen';
+import { SettingsScreen } from './src/screens/SettingsScreen';
 import type { MotoClient } from './src/protocol/MotoClient';
 import type { DeviceDescriptor } from './src/transport/Transport';
-
-type Tab = 'ride' | 'setup' | 'security' | 'settings';
 
 type Detail =
   | 'board'
@@ -61,13 +54,6 @@ type Detail =
   | 'firmwareUpdate'
   | 'eventLog';
 
-const TABS: readonly TabDef<Tab>[] = [
-  { key: 'ride', label: 'Ride' },
-  { key: 'setup', label: 'Setup' },
-  { key: 'security', label: 'Security' },
-  { key: 'settings', label: 'Settings' },
-];
-
 interface Session {
   client: MotoClient;
   device: DeviceDescriptor;
@@ -75,9 +61,8 @@ interface Session {
 
 function AppContent(): React.JSX.Element {
   const nav = useNavGuard();
-  const tabBarHeight = useTabBarHeight();
   const [session, setSession] = useState<Session | null>(null);
-  const [tab, setTab] = useState<Tab>('ride');
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const [detail, setDetail] = useState<Detail | null>(null);
   /* Surfaced on the pairing screen after an unexpected drop, so a board going
    * out of range reads as a plain message rather than whatever error the
@@ -88,7 +73,7 @@ function AppContent(): React.JSX.Element {
     (client: MotoClient, device: DeviceDescriptor) => {
       setNotice(null);
       setSession({ client, device });
-      setTab('ride');
+      setSettingsOpen(false);
       setDetail(null);
     },
     [],
@@ -111,7 +96,7 @@ function AppContent(): React.JSX.Element {
           `Lost connection to ${session.device.name}. Searching for it again…`,
         );
         setSession(null);
-        setTab('ride');
+        setSettingsOpen(false);
         setDetail(null);
       }
     });
@@ -138,12 +123,14 @@ function AppContent(): React.JSX.Element {
 
   const client = session.client;
   const closeDetail = (): void => setDetail(null);
+  const closeSettings = (): void => setSettingsOpen(false);
 
   /* Every way OUT of a detail screen that the shell owns has to go through
    * the mounted screen's guard, or the confirmation is only as good as the
    * route the rider happened to take. The screen's own Back chevron is
-   * already guarded inside useLeaveGuard; these are the two the shell drives
-   * — a tab tap and an edge swipe. */
+   * already guarded inside useLeaveGuard; this is the one the shell drives
+   * — an edge swipe. (Settings itself carries no dirty state of its own, so
+   * closing it doesn't need guarding — same as a tab switch never did.) */
   const guarded = (proceed: () => void): void => {
     if (nav) nav.run(proceed);
     else proceed();
@@ -178,111 +165,76 @@ function AppContent(): React.JSX.Element {
     }
   })();
 
-  const tabScreen = ((): React.JSX.Element => {
-    switch (tab) {
-      case 'setup':
-        return (
-          <SectionScreen
-            title="Setup"
-            items={[
-              {
-                label: 'Board',
-                detail: 'Name this board',
-                onPress: () => setDetail('board'),
-              },
-              {
-                label: 'Outputs',
-                detail: 'Name channels, choose what each one does',
-                onPress: () => setDetail('outputs'),
-              },
-              {
-                label: 'Buttons',
-                detail: 'Identify switches and bind them to outputs',
-                onPress: () => setDetail('buttons'),
-              },
-            ]}
-          />
-        );
-      case 'security':
-        return (
-          <SectionScreen
-            title="Security"
-            items={[
-              {
-                label: 'Paired keys',
-                detail: 'Enrolled phones, revoke, ownership transfer',
-                onPress: () => setDetail('keys'),
-              },
-              {
-                label: 'Immobilizer',
-                detail: 'Phone key, cheat-code, ignition switch',
-                onPress: () => setDetail('lock'),
-              },
-            ]}
-          />
-        );
-      case 'settings':
-        return (
-          <SectionScreen
-            title="Settings"
-            header={<BoardInfoCard client={client} />}
-            items={[
-              {
-                label: 'Diagnostics',
-                detail: 'Per-channel current, faults, calibration',
-                onPress: () => setDetail('diagnostics'),
-              },
-              {
-                label: 'Firmware',
-                detail: 'Check for and install updates',
-                onPress: () => setDetail('firmwareUpdate'),
-              },
-              {
-                label: 'Event log',
-                detail: 'Lock, key and OTA history',
-                onPress: () => setDetail('eventLog'),
-              },
-            ]}
-          />
-        );
-      default:
-        return (
+  const settingsScreen = (
+    <SettingsScreen
+      header={<BoardInfoCard client={client} />}
+      configurationItems={[
+        {
+          label: 'Outputs',
+          detail: 'Name channels, choose what each one does',
+          onPress: () => setDetail('outputs'),
+        },
+        {
+          label: 'Buttons',
+          detail: 'Identify switches and bind them to outputs',
+          onPress: () => setDetail('buttons'),
+        },
+        {
+          label: 'Immobilizer',
+          detail: 'Phone key, cheat-code, ignition switch',
+          onPress: () => setDetail('lock'),
+        },
+        {
+          label: 'Paired keys',
+          detail: 'Enrolled phones, revoke, ownership transfer',
+          onPress: () => setDetail('keys'),
+        },
+      ]}
+      deviceItems={[
+        {
+          label: 'Board',
+          detail: 'Name this board',
+          onPress: () => setDetail('board'),
+        },
+        {
+          label: 'Diagnostics',
+          detail: 'Per-channel current, faults, calibration',
+          onPress: () => setDetail('diagnostics'),
+        },
+        {
+          label: 'Firmware',
+          detail: 'Check for and install updates',
+          onPress: () => setDetail('firmwareUpdate'),
+        },
+        {
+          label: 'Event log',
+          detail: 'Lock, key and OTA history',
+          onPress: () => setDetail('eventLog'),
+        },
+      ]}
+      onBack={closeSettings}
+      onDisconnect={handleDisconnect}
+    />
+  );
+
+  return (
+    <SafeAreaView style={styles.container}>
+      <StatusBar barStyle="light-content" backgroundColor={colors.bg} />
+      <View style={styles.body}>
+        {detail ? (
+          <EdgeSwipeBack onBack={() => guarded(closeDetail)}>
+            {detailScreen}
+          </EdgeSwipeBack>
+        ) : settingsOpen ? (
+          <EdgeSwipeBack onBack={closeSettings}>{settingsScreen}</EdgeSwipeBack>
+        ) : (
           <DashboardScreen
             client={client}
             deviceName={session.device.name}
-            onDisconnect={handleDisconnect}
+            onOpenSettings={() => setSettingsOpen(true)}
           />
-        );
-    }
-  })();
-
-  /* The home-indicator inset is the bar's to own — it pads itself, so the
-   * glass runs to the bottom of the screen instead of floating above a strip
-   * of background. Hence no 'bottom' edge here. */
-  return (
-    <SafeAreaView style={styles.container} edges={['top', 'left', 'right']}>
-      <StatusBar barStyle="light-content" backgroundColor={colors.bg} />
-      <BottomInsetProvider value={tabBarHeight}>
-        <View style={styles.body}>
-          {detailScreen ? (
-            <EdgeSwipeBack onBack={() => guarded(closeDetail)}>
-              {detailScreen}
-            </EdgeSwipeBack>
-          ) : (
-            tabScreen
-          )}
-        </View>
-        <TabBar
-          tabs={TABS}
-          active={tab}
-          onSelect={next =>
-            guarded(() => {
-              setDetail(null);
-              setTab(next);
-            })
-          }
-        />
-      </BottomInsetProvider>
+        )}
+      </View>
     </SafeAreaView>
   );
 }

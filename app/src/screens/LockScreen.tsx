@@ -25,6 +25,7 @@ import {
   type LockConfig,
 } from '../protocol/types';
 import {
+  Button,
   NumberInput,
   Screen,
   SkeletonScreen,
@@ -209,7 +210,7 @@ export function LockScreen({
       c => c.is_ignition,
     );
     if (outputs && !hasIgnitionOutput) {
-      return 'No output is marked as the ignition, so there is nothing to immobilize. Set one under Setup → Outputs first.';
+      return 'No output is marked as the ignition, so there is nothing to immobilize. Set one under Settings → Outputs first.';
     }
     const hasSwitch =
       (config.methodsMask & LOCK_METHOD.IGNITION_SWITCH) !== 0 &&
@@ -349,7 +350,18 @@ export function LockScreen({
   }
 
   return (
-    <Screen title="Lock / Immobilizer" onBack={back}>
+    <Screen
+      title="Lock / Immobilizer"
+      onBack={back}
+      trailing={
+        <Button
+          label={saving ? 'Saving' : 'Save'}
+          onPress={saveConfig}
+          busy={saving}
+          tone={dirty ? 'primary' : 'secondary'}
+        />
+      }
+    >
       <View style={styles.row}>
         <Text style={styles.rowLabel}>Immobilizer enabled</Text>
         <Switch
@@ -451,13 +463,6 @@ export function LockScreen({
 
       {error && <Text style={styles.error}>{error}</Text>}
       {saveResult && <Text style={styles.success}>{saveResult}</Text>}
-      <TouchableOpacity
-        style={[styles.saveButton, saving && styles.disabled]}
-        onPress={saveConfig}
-        disabled={saving}
-      >
-        <Text style={styles.saveButtonText}>{saving ? 'Saving…' : 'Save'}</Text>
-      </TouchableOpacity>
 
       <Text style={styles.sectionTitle}>Cheat-code</Text>
       <Text style={styles.hint}>
@@ -679,15 +684,7 @@ const styles = StyleSheet.create({
   },
   error: { color: colors.danger },
   success: { color: colors.on },
-  saveButton: {
-    backgroundColor: colors.accent,
-    padding: 12,
-    borderRadius: 8,
-    alignItems: 'center',
-    marginTop: 4,
-  },
   disabled: { opacity: 0.5 },
-  saveButtonText: { color: colors.textOnAccent, fontWeight: '600' },
   actionRow: { flexDirection: 'row', gap: 8 },
   smallButton: {
     paddingVertical: 8,

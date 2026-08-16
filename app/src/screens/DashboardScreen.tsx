@@ -20,19 +20,25 @@ import {
   type LockConfig,
   type Status,
 } from '../protocol/types';
-import { Button, Notice, Screen } from '../ui/components';
+import {
+  Button,
+  Divider,
+  Notice,
+  RoundIconButton,
+  Screen,
+} from '../ui/components';
 import { colors, radius, space, type } from '../ui/theme';
 
 interface Props {
   client: MotoClient;
   deviceName: string;
-  onDisconnect: () => void;
+  onOpenSettings: () => void;
 }
 
 export function DashboardScreen({
   client,
   deviceName,
-  onDisconnect,
+  onOpenSettings,
 }: Props): React.JSX.Element {
   const [status, setStatus] = useState<Status | null>(client.getLastStatus());
   const [config, setConfig] = useState<DeviceConfig | null>(null);
@@ -49,7 +55,7 @@ export function DashboardScreen({
   useEffect(() => {
     const unsub = client.onStatus(setStatus);
     /* Only the board name and the hazard-group check need this now that the
-     * channel rows have moved to Setup → Outputs. */
+     * channel rows have moved to Settings → Outputs. */
     client
       .configRead()
       .then(setConfig)
@@ -163,7 +169,7 @@ export function DashboardScreen({
       ways.push('turn the ignition switch');
     }
     return ways.length === 0
-      ? 'Phone unlock is off and no other method is configured — check Security.'
+      ? 'Phone unlock is off and no other method is configured — check Settings.'
       : `Phone unlock is off for this bike: ${ways.join(', or ')}.`;
   })();
   /* Locking is refused by the firmware while the engine runs or the ignition
@@ -181,7 +187,11 @@ export function DashboardScreen({
        * name a phone has cached can lag until the next discovery. */
       title={config?.device_name?.trim() || deviceName}
       trailing={
-        <Button label="Disconnect" tone="ghost" onPress={onDisconnect} />
+        <RoundIconButton
+          glyph="⚙"
+          accessibilityLabel="Settings"
+          onPress={onOpenSettings}
+        />
       }
       scroll={false}
     >
@@ -212,26 +222,38 @@ export function DashboardScreen({
       {hazardError && <Notice tone="danger">{hazardError}</Notice>}
 
       {/* The lock state takes the room, because it is the one thing worth
-       * reading from arm's length while pulling gloves on. */}
+       * reading from arm's length while pulling gloves on.
+       *
+       * lockConfig arrives async (lockGetConfig(), useEffect above); until it
+       * does, hasImmobilizer reads false the same as "genuinely disabled"
+       * would, which used to flash "NOT SET UP" for a beat on every screen
+       * open before flipping to the real state. Gating on lockConfig === null
+       * distinguishes "don't know yet" from "know, and it's off". */}
       <View style={styles.hero}>
         <Text style={styles.heroLabel}>
-          {hasImmobilizer ? 'Immobilizer' : 'Immobilizer off'}
+          {lockConfig === null
+            ? ' '
+            : hasImmobilizer
+              ? 'Immobilizer'
+              : 'Immobilizer off'}
         </Text>
         <Text
           style={[styles.heroState, isLocked && styles.heroStateLocked]}
           numberOfLines={1}
           adjustsFontSizeToFit
         >
-          {hasImmobilizer ? lockLabel : 'NOT SET UP'}
+          {lockConfig === null ? '—' : hasImmobilizer ? lockLabel : 'NOT SET UP'}
         </Text>
         <Text style={styles.heroDetail}>
-          {!hasImmobilizer
-            ? 'Set one up under Security to lock this bike from your phone.'
-            : isLocked
-              ? canUnlockFromApp
-                ? 'Nothing switches on until you unlock. Unlocking turns the ignition on, ready to start.'
-                : otherWayIn
-              : 'Locking switches the ignition off, cuts every output, and blocks the starter.'}
+          {lockConfig === null
+            ? ' '
+            : !hasImmobilizer
+              ? 'Set one up under Settings to lock this bike from your phone.'
+              : isLocked
+                ? canUnlockFromApp
+                  ? 'Nothing switches on until you unlock. Unlocking turns the ignition on, ready to start.'
+                  : otherWayIn
+                : 'Locking switches the ignition off, cuts every output, and blocks the starter.'}
         </Text>
       </View>
 
@@ -260,6 +282,7 @@ export function DashboardScreen({
         />
       )}
 
+      <Divider />
       <View style={styles.batteryRow}>
         <Text style={styles.batteryLabel}>Battery</Text>
         <Text
@@ -301,12 +324,8 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'baseline',
     justifyContent: 'space-between',
-    backgroundColor: colors.raised,
-    borderRadius: radius.lg,
-    borderWidth: 1,
-    borderColor: colors.border,
-    paddingHorizontal: space.lg,
-    paddingVertical: space.md,
+    paddingHorizontal: space.md,
+    paddingTop: space.md,
   },
   batteryLabel: { ...type.overline },
   batteryValue: { ...type.value, fontSize: 30, fontWeight: '700' },
