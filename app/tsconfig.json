@@ -1,7 +1,16 @@
 {
   "extends": "@react-native/typescript-config",
   "compilerOptions": {
-    "strict": true
+    "strict": true,
+    /* Base config restricts automatic ambient-type inclusion to ["jest"] —
+     * "node" must be listed explicitly for the bare `global` identifier
+     * (__tests__/*.test.ts's `global as unknown as {...}` casts) to
+     * resolve. Previously relied on @types/node being incidentally hoisted
+     * by some other package's unpinned "*" dependency on it, which made
+     * `tsc --noEmit` pass or fail depending on npm's dependency-tree
+     * resolution for that install — now an explicit, pinned devDependency
+     * (package.json) instead of hoisting luck. */
+    "types": ["jest", "node"]
   },
   "include": ["src/**/*", "App.tsx", "index.js"]
 }
