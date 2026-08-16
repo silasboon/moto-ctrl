@@ -7,9 +7,9 @@
  *
  * Plain JS (not TS): keeps this test independent of the app's strict
  * RN-flavored tsconfig (no Node lib/types included there), matching
- * firmware/sim/itest/*.mjs's own plain-JS style. Requires `ws` (a
- * devDependency here) to stand in for the RN-native WebSocket global, which
- * Jest's React Native preset doesn't provide a working implementation of.
+ * firmware/sim/itest/*.mjs's own plain-JS style. The RN-native WebSocket
+ * global SimTransport needs is polyfilled for every test file by
+ * jest.config.js's setupFiles (jest.setup.js), not here.
  *
  * Skips (doesn't fail) if the sim hasn't been built locally:
  *   cd firmware/sim && cmake -S . -B build && cmake --build build
@@ -18,10 +18,6 @@
 const { spawn } = require('child_process');
 const fs = require('fs');
 const path = require('path');
-
-// Must happen before requiring SimTransport, which captures this at
-// module-load time (src/platform/webSocketGlobal.ts).
-global.WebSocket = require('ws');
 
 const nacl = require('tweetnacl');
 const { MotoClient } = require('../protocol/MotoClient');
