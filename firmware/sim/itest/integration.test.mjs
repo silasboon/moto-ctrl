@@ -275,7 +275,7 @@ test('config read/write round-trip over chunked JSON', async () => {
 
     const json = await client.configRead();
     const cfg = JSON.parse(json);
-    assert.equal(cfg.schema_version, 6);
+    assert.equal(cfg.schema_version, 8);
     assert.equal(cfg.outputs.channels.length, 12);
 
     /* v6: a channel is just a name plus a behaviour — no taxonomy to pick

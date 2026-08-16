@@ -19,7 +19,7 @@ logic" caveat about the fault mask stopped applying — see the rewritten
 | Host unit tests (`ctest`, `firmware/sim/tests/`) | Portable core (`mc_*`) compiled for the host | State machines, protocol framing, crypto, config serialization — in isolation | Anything ESP-IDF-specific, timing on real hardware, BLE |
 | Node integration tests (`firmware/sim/itest/`) | The sim binary + a real WebSocket client | Full protocol round-trips, cross-language Ed25519 (JS signs, C verifies) | ESP-IDF/BLE specifics |
 | **Sim debug GUI** (`firmware/sim/gui/`) | The sim binary + a browser | Everything above, interactively, plus fault injection (§3) and multi-step scenarios (§4) | ESP-IDF/BLE specifics |
-| **QEMU boot validation** (§5) | The real cross-compiled firmware binary, emulated | Boot sequence, NVS load, config/output restore, watchdog init — on the *actual target code* | **BLE/NimBLE radio behavior** — QEMU's Xtensa target has no BLE controller emulation |
+| **QEMU boot validation** (§5) | The real cross-compiled firmware binary, emulated | Boot sequence, NVS load, config/output restore, watchdog init — on the *actual target code*, when it boots at all (see §5's CI note) | **BLE/NimBLE radio behavior** — QEMU's Xtensa target has no BLE controller emulation |
 | Bench hardware (`docs/HARDWARE_TESTING.md`) | Real board | Everything, including BLE, real GPIO, real current sensing | — |
 
 No layer above the bottom one is a substitute for bench validation before
@@ -251,10 +251,42 @@ ones worth keeping under a location of your choosing (e.g.
 
 ## 5. QEMU boot validation
 
-CI (`firmware-qemu` job in `.github/workflows/firmware.yml`) builds the real
-on-target firmware and boots it under ESP-IDF's bundled QEMU
-(`idf.py qemu`, Xtensa target), then greps the serial log for boot-sequence
-markers logged from `firmware/main/main.c`:
+**Not run in CI as of 2026-08.** This was originally a `firmware-qemu` job
+in `.github/workflows/firmware.yml` that built the real on-target firmware,
+booted it under ESP-IDF's bundled QEMU, and grepped the serial log for the
+boot-sequence markers below. It was removed after the job started hanging
+for the full boot-sequence check on every run, confirmed to be an upstream
+ESP-IDF/QEMU issue rather than a firmware regression:
+
+- The hang happens *before* `app_main()` is ever called — confirmed by
+  temporarily instrumenting the first line of `app_main()` with a raw
+  `esp_rom_printf()`; it never printed. Nothing in this repo's code runs
+  that early, so nothing in this repo caused it.
+- Reproduced identically against two different ESP-IDF/QEMU combinations
+  (the `espressif/idf:latest` container's bundled dev snapshot, and the
+  pinned stable `espressif/idf:v6.0.2`) via `docker run` locally — same
+  hang, same last log line (`W (...) eFuse: calibration efuse version does
+  not match, set default version to 0`), immediately followed by silence
+  until the job's own timeout killed it.
+- §7 below already flagged a related, never-resolved oddity — a
+  `gpio: conflict found for GPIO[3]` warning during QEMU boot — as
+  QEMU-specific and worth tracing. This is very plausibly the same
+  underlying conflict, now hanging outright instead of just warning under
+  whatever QEMU/IDF combination CI happened to be pulling.
+
+Given `docs/TESTING.md`'s own pyramid framing (*"No layer above the bottom
+one is a substitute for bench validation"*), this was always the thinnest,
+most infrastructure-fragile layer — useful as a boot-sanity signal, never
+a correctness gate. Blocking every push on an unresolved upstream QEMU
+issue unrelated to code changes cost more than the signal was worth, so it
+was dropped from CI rather than left failing indefinitely or made
+non-blocking-but-permanently-red. It's still fully runnable locally (below)
+for anyone who wants to pick the GPIO3/QEMU conflict back up.
+
+Historically (and still, locally, once/if the underlying QEMU issue is
+sorted out): builds the real on-target firmware, boots it under ESP-IDF's
+bundled QEMU (`idf.py qemu`, Xtensa target), and greps the serial log for
+boot-sequence markers logged from `firmware/main/main.c`:
 
 ```
 MOTO-CTRL boot: early_init done
@@ -326,20 +358,26 @@ asserted by a script; "N/A" means the underlying feature doesn't exist.
 
 ## 7. Other findings surfaced by this harness
 
-- **GPIO3 conflict warning under QEMU boot**: the serial log shows
-  `W (nnn) gpio: conflict found for GPIO[3]` during early boot. GPIO3 is one
-  of the two strapping pins (`hardware/PINOUT.md`) with special handling
-  requirements in `board_config_early_init()`. This may be QEMU-specific
-  (its default console UART pin assignment, unrelated to GPIO3) or may be a
-  real double-configuration worth tracing — it hasn't been investigated
-  further since it's a QEMU-observed finding, not something reproducible on
-  the host simulator. Diagnostics does **not** touch GPIO3/PROFET_IN6 at
-  all — `diag_hal.c` only configures the shared `DSEL` (GPIO48), the
-  per-device `DEN` lines (including GPIO46, the *other* strapping pin, U4's
-  DEN), and the two ADC channels; GPIO3 stays owned exclusively by
-  `output_hal_gpio.c`. This warning is still unresolved and still worth a
-  look — flagged again rather than silently dropped, especially since no
-  ESP-IDF/QEMU was available in this environment to re-run the check.
+- **GPIO3 conflict warning under QEMU boot, now escalated to a full boot
+  hang (see §5)**: the serial log used to show
+  `W (nnn) gpio: conflict found for GPIO[3]` during early boot without
+  otherwise stopping the boot sequence. As of 2026-08, `idf.py qemu` no
+  longer completes the boot at all — it hangs before `app_main()` is ever
+  called, on both the `espressif/idf:latest` dev snapshot and the pinned
+  stable `v6.0.2`, which is what got `firmware-qemu` dropped from CI (§5).
+  GPIO3 is one of the two strapping pins (`hardware/PINOUT.md`) with
+  special handling requirements in `board_config_early_init()` — but since
+  the hang happens before that function (or any of this repo's code) runs,
+  this repo's GPIO3 handling isn't itself the cause; the conflict, if
+  that's really what it is, is between QEMU's own console/pin setup and
+  something in ESP-IDF's pre-`app_main` startup. Diagnostics does **not**
+  touch GPIO3/PROFET_IN6 at all — `diag_hal.c` only configures the shared
+  `DSEL` (GPIO48), the per-device `DEN` lines (including GPIO46, the
+  *other* strapping pin, U4's DEN), and the two ADC channels; GPIO3 stays
+  owned exclusively by `output_hal_gpio.c`. Still unresolved, still worth a
+  look for anyone who wants to bisect ESP-IDF/qemu-xtensa versions or dig
+  into Espressif's QEMU fork directly — flagged again rather than silently
+  dropped.
 - The host simulator's `mc_input` engine runs a real 10ms-tick
   `mc_input_poll()` loop so the GUI's virtual buttons exercise the actual
   debounce/combo engine, not a stand-in.

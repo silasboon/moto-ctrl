@@ -4,6 +4,12 @@
 // implements the same protocol in TypeScript behind its Transport interface.
 
 import nacl from 'tweetnacl';
+// Node only ships a global WebSocket client since v22 (stabilized from
+// undici); CI pins node-version: 20 (.github/workflows/firmware.yml), which
+// has none. Importing directly avoids depending on whichever Node happens
+// to be running this — same fix as app/jest.setup.js for the app's own
+// transport tests, applied here since this is plain Node, not Jest.
+import WebSocket from 'ws';
 
 // Channels (WebSocket message first byte == BLE GATT characteristic).
 export const CH = { STATUS: 0, AUTH: 1, COMMAND: 2, CONFIG: 3, OTA: 4 };

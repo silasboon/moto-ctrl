@@ -8,7 +8,8 @@
     "test": "node --test"
   },
   "dependencies": {
-    "tweetnacl": "1.0.3"
+    "tweetnacl": "1.0.3",
+    "ws": "8.21.1"
   },
   "engines": {
     "node": ">=20"
