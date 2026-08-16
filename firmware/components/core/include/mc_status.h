@@ -17,7 +17,7 @@
 #include "mc_types.h"
 
 #define MC_FW_VERSION_MAJOR 0
-#define MC_FW_VERSION_MINOR 7
+#define MC_FW_VERSION_MINOR 8
 #define MC_FW_VERSION_PATCH 0
 
 #define MC_STATUS_WIRE_LEN 16

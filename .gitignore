@@ -9,6 +9,11 @@ firmware/qemu_boot.log
 # Host simulator build artifacts
 firmware/sim/build/
 
+# Signed OTA release artifacts (tools/sign-firmware.py) -- uploaded as
+# GitHub Release assets, never committed; see tools/README.md.
+*.mcota
+/manifest.json
+
 # OS / editor
 .DS_Store
 *.swp
