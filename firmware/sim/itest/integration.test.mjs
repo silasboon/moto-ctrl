@@ -167,7 +167,7 @@ test('status is readable without authentication', async () => {
   const { client, stop } = await startSession();
   try {
     const st = await client.getStatus();
-    assert.equal(st.fw, '0.8.0');
+    assert.equal(st.fw, '0.8.1');
     assert.equal(st.outputStateMask, 0);
     assert.equal(st.batteryMv, 13200);
     assert.equal(st.lockState, LOCK_STATE.UNLOCKED); /* immobilizer disabled by default */
