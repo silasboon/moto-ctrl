@@ -159,13 +159,16 @@ describe('downloadFirmwareBundle', () => {
       arrayBuffer: () => bundleBytes.slice().buffer,
     });
 
-    const bundle = await downloadFirmwareBundle({
-      version: '1.2.0',
-      changelog: '',
-      bundle_url: 'https://example.com/fw.mcota',
-      bundle_sha512: bundleSha512,
-      bundle_size: bundleBytes.length,
-    });
+    const bundle = await downloadFirmwareBundle(
+      {
+        version: '1.2.0',
+        changelog: '',
+        bundle_url: 'https://example.com/fw.mcota',
+        bundle_sha512: bundleSha512,
+        bundle_size: bundleBytes.length,
+      },
+      'example.com',
+    );
     expect(bundle.imageSize).toBe(128);
     expect(Array.from(bundle.image)).toEqual(Array.from(image));
   });
@@ -177,13 +180,16 @@ describe('downloadFirmwareBundle', () => {
       arrayBuffer: () => bundleBytes.slice().buffer,
     });
     await expect(
-      downloadFirmwareBundle({
-        version: '1.2.0',
-        changelog: '',
-        bundle_url: 'https://example.com/fw.mcota',
-        bundle_sha512: 'ff'.repeat(64), // wrong on purpose
-        bundle_size: bundleBytes.length,
-      }),
+      downloadFirmwareBundle(
+        {
+          version: '1.2.0',
+          changelog: '',
+          bundle_url: 'https://example.com/fw.mcota',
+          bundle_sha512: 'ff'.repeat(64), // wrong on purpose
+          bundle_size: bundleBytes.length,
+        },
+        'example.com',
+      ),
     ).rejects.toThrow(UpdateCheckError);
   });
 
@@ -194,13 +200,46 @@ describe('downloadFirmwareBundle', () => {
       arrayBuffer: () => bundleBytes.slice().buffer,
     });
     await expect(
-      downloadFirmwareBundle({
-        version: '1.2.0',
-        changelog: '',
-        bundle_url: 'https://example.com/fw.mcota',
-        bundle_sha512: bytesToHex(nacl.hash(bundleBytes)),
-        bundle_size: bundleBytes.length + 1, // wrong on purpose
-      }),
+      downloadFirmwareBundle(
+        {
+          version: '1.2.0',
+          changelog: '',
+          bundle_url: 'https://example.com/fw.mcota',
+          bundle_sha512: bytesToHex(nacl.hash(bundleBytes)),
+          bundle_size: bundleBytes.length + 1, // wrong on purpose
+        },
+        'example.com',
+      ),
+    ).rejects.toThrow(UpdateCheckError);
+  });
+
+  test('rejects a bundle_url on a different host than the manifest', async () => {
+    await expect(
+      downloadFirmwareBundle(
+        {
+          version: '1.2.0',
+          changelog: '',
+          bundle_url: 'https://evil.example/fw.mcota',
+          bundle_sha512: 'ab'.repeat(64),
+          bundle_size: 10,
+        },
+        'example.com',
+      ),
+    ).rejects.toThrow(UpdateCheckError);
+  });
+
+  test('rejects a non-https bundle_url even on the trusted host', async () => {
+    await expect(
+      downloadFirmwareBundle(
+        {
+          version: '1.2.0',
+          changelog: '',
+          bundle_url: 'http://example.com/fw.mcota',
+          bundle_sha512: 'ab'.repeat(64),
+          bundle_size: 10,
+        },
+        'example.com',
+      ),
     ).rejects.toThrow(UpdateCheckError);
   });
 });

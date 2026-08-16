@@ -385,6 +385,37 @@ static void test_tick_auto_unlocks_on_ignition_switch(void)
     assert(fx.lock.state == MC_LOCK_ST_UNLOCKED);
 }
 
+/* Regression: turning the key off must drop the ignition output itself
+ * (not just be ignored), so parked_guard sees it and the bike actually
+ * progresses PARKED -> LOCKED through the ordinary grace timer. Previously
+ * ignition_switch_level was only ever read to unlock from LOCKED, so an
+ * ignition-switch-only rider could unlock the bike but never got it back to
+ * LOCKED by turning the key off. */
+static void test_ignition_switch_off_drops_ignition_and_locks(void)
+{
+    lock_fixture_t fx;
+    fx_init_outputs(&fx);
+    fx_enable_with_cheatcode(&fx, 5000);
+    fx.lock.config.methods_mask = MC_LOCK_METHOD_IGNITION_SWITCH;
+    fx.lock.config.ignition_switch_input = 2;
+    assert(mc_lock_request_lock(&fx.lock, &fx.output, 0) == MC_LOCK_RESULT_OK);
+    assert(fx.lock.state == MC_LOCK_ST_LOCKED);
+
+    mc_lock_inputs_t in = no_inputs();
+    in.ignition_switch_level = true;
+    mc_lock_tick(&fx.lock, &fx.output, 1000, &in);
+    assert(fx.lock.state == MC_LOCK_ST_UNLOCKED);
+    assert(mc_output_get_state(&fx.output, 5) == true);
+
+    in.ignition_switch_level = false;
+    mc_lock_tick(&fx.lock, &fx.output, 2000, &in);
+    assert(mc_output_get_state(&fx.output, 5) == false);
+    assert(fx.lock.state == MC_LOCK_ST_PARKED);
+
+    mc_lock_tick(&fx.lock, &fx.output, 2000 + 5000, &in);
+    assert(fx.lock.state == MC_LOCK_ST_LOCKED);
+}
+
 /* --- interrupted-transition / fault recovery --- */
 
 static void test_simultaneous_unlock_triggers_are_idempotent(void)
@@ -1158,6 +1189,7 @@ int main(void)
     test_phone_authed_edge_rejected_when_method_disabled();
     test_locking_while_phone_still_connected_stays_locked();
     test_tick_auto_unlocks_on_ignition_switch();
+    test_ignition_switch_off_drops_ignition_and_locks();
 
     test_simultaneous_unlock_triggers_are_idempotent();
 

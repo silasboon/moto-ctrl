@@ -174,7 +174,10 @@ void mc_lock_init(mc_lock_t *lock, const mc_lock_config_t *config, bool persiste
 /* Call every ~10ms (same cadence as mc_input_poll). Drives the automatic
  * UNLOCKED <-> PARKED <-> LOCKED transitions (engine/ignition guards, the
  * auto-lock grace timer), passive auto-unlock via the ignition switch, the
- * cheat-code entry timeout, and the backoff quiet-period reset. */
+ * cheat-code entry timeout, and the backoff quiet-period reset. Also, outside
+ * LOCKED, mirrors an active ignition-switch input's level onto the ignition
+ * output itself (mc_output_set()), so turning the key off actually drops
+ * ignition and lets the parked-guard/auto-lock timer see it. */
 void mc_lock_tick(mc_lock_t *lock, mc_output_engine_t *output, uint32_t now_ms,
                   const mc_lock_inputs_t *inputs);
 

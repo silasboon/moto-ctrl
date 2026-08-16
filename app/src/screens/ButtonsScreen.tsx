@@ -143,7 +143,7 @@ function channelName(ch: number, config: DeviceConfig): string {
   return name && name.trim() ? name : `Output ${ch + 1}`;
 }
 
-function buttonLabel(index: number, config: DeviceConfig | null): string {
+export function buttonLabel(index: number, config: DeviceConfig | null): string {
   const name = config?.inputs.names[index];
   return name && name.trim() ? name : `Button ${index + 1}`;
 }

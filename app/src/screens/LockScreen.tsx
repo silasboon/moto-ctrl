@@ -31,6 +31,7 @@ import {
   useLeaveGuard,
 } from '../ui/components';
 import { colors } from '../ui/theme';
+import { buttonLabel } from './ButtonsScreen';
 
 /** Matches MC_LOCK_CHEATCODE_MIN_LEN / MAX_LEN (mc_lock.h). */
 const CHEATCODE_MIN = 4;
@@ -409,7 +410,7 @@ export function LockScreen({
             {Array.from({ length: 8 }).map((_, i) => (
               <Chip
                 key={i}
-                label={`input ${i}`}
+                label={buttonLabel(i, outputs)}
                 active={config.ignitionSwitchInput === i}
                 onPress={() =>
                   setConfig(prev => ({ ...prev, ignitionSwitchInput: i }))

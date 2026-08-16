@@ -10,6 +10,7 @@ jobs:
     name: ESP-IDF build (esp32s3)
     runs-on: ubuntu-latest
     container: espressif/idf:latest
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
 
@@ -25,6 +26,7 @@ jobs:
     name: QEMU boot validation (esp32s3)
     runs-on: ubuntu-latest
     container: espressif/idf:latest
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
 
@@ -50,7 +52,19 @@ jobs:
           # crash-reboot-loops forever — expected, see docs/TESTING.md. This
           # job only validates the boot sequence up to that known gap, so it
           # always kills QEMU on a timeout rather than waiting for exit.
-          timeout 30 idf.py qemu > qemu_boot.log 2>&1 || true
+          #
+          # Plain `timeout 30 cmd` only sends SIGTERM at 30s and, critically,
+          # gives up right there if the process doesn't die from it — it does
+          # NOT escalate on its own. idf.py qemu (a Python wrapper around a
+          # qemu-system-xtensa child) has been observed surviving that alone,
+          # which left the job hanging past this script entirely until
+          # GitHub's own default 360-minute job timeout finally killed it.
+          # `-k 10` tells `timeout` to follow up with SIGKILL 10s later if
+          # SIGTERM didn't land, and the pkill below is a second net in case
+          # qemu-system-xtensa ended up as an orphaned grandchild `timeout`
+          # never signalled at all.
+          timeout -k 10 30 idf.py qemu > qemu_boot.log 2>&1 || true
+          pkill -9 -f qemu-system-xtensa 2>/dev/null || true
 
           echo "----- QEMU serial log -----"
           cat qemu_boot.log
@@ -82,6 +96,7 @@ jobs:
   sim-build-test:
     name: Host simulator build + tests
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
 

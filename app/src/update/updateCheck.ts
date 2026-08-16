@@ -27,6 +27,33 @@ import type { FirmwareBundle, UpdateManifest } from '../protocol/types';
 
 export class UpdateCheckError extends Error {}
 
+/** AGENTS.md: the manifest's bundle_url is remote input (the manifest could
+ * be corrupt, tampered, or — since it's fetched over plain HTTPS with no
+ * app-layer auth of its own — pointed at something else entirely) and must
+ * be rejected unless it is https:// and on the same host as
+ * UPDATE_MANIFEST_URL. A manifest naming any other host is malformed and
+ * the update must fail closed rather than silently fetch from wherever it
+ * says. */
+function assertTrustedBundleUrl(rawUrl: string, expectedHost: string): void {
+  let parsed: URL;
+  try {
+    parsed = new URL(rawUrl);
+  } catch {
+    throw new UpdateCheckError(`manifest bundle_url is not a valid URL: ${rawUrl}`);
+  }
+  if (parsed.protocol !== 'https:') {
+    throw new UpdateCheckError(
+      `manifest bundle_url must be https:// (got "${parsed.protocol}")`,
+    );
+  }
+  if (parsed.hostname !== expectedHost) {
+    throw new UpdateCheckError(
+      `manifest bundle_url host "${parsed.hostname}" is not the trusted update host ` +
+        `"${expectedHost}" — refusing to download from an untrusted host`,
+    );
+  }
+}
+
 /** Fetches the version manifest from the baked-in URL (or an override, for
  * tests). Throws UpdateCheckError on any network/shape problem — never
  * throws anything else. */
@@ -85,7 +112,17 @@ export function isNewerVersion(current: string, remote: string): boolean {
  * does not and cannot replace), then parses it. */
 export async function downloadFirmwareBundle(
   manifest: UpdateManifest,
+  expectedHost: string = new URL(UPDATE_MANIFEST_URL).hostname,
 ): Promise<FirmwareBundle> {
+  /* Checked against the URL as written in the manifest, not the URL the
+   * download eventually lands on. GitHub Releases assets (the reference
+   * deployment, UPDATE_MANIFEST_URL) 302 to a signed objects.
+   * githubusercontent.com URL for the actual bytes — a legitimate,
+   * GitHub-controlled hop off github.com that a strict post-redirect
+   * same-host check would wrongly reject. What this blocks is a
+   * corrupt/tampered manifest *naming* some other host outright. */
+  assertTrustedBundleUrl(manifest.bundle_url, expectedHost);
+
   let res: Response;
   try {
     res = await fetch(manifest.bundle_url);

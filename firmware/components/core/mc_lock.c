@@ -240,6 +240,23 @@ void mc_lock_tick(mc_lock_t *lock, mc_output_engine_t *output, uint32_t now_ms,
         return;
     }
 
+    /* Ignition-switch mode: outside LOCKED, the switch is authoritative for
+     * the ignition output itself, not just an unlock trigger. Turning the
+     * key off must drop ignition through the ordinary output path so
+     * parked_guard below sees it and the auto-lock grace timer can start —
+     * otherwise the switch could unlock the bike but never lock it again.
+     * While LOCKED the switch is a level checked below instead: turning it
+     * on unlocks (enter_unlocked() lights ignition itself); turning it off
+     * is already a no-op since ignition is already off. */
+    bool switch_active = (lock->config.methods_mask & MC_LOCK_METHOD_IGNITION_SWITCH) != 0 &&
+                         lock->config.ignition_switch_input >= 0;
+    if (switch_active && lock->state != MC_LOCK_ST_LOCKED) {
+        int ign = mc_output_find_ignition_channel(&output->config);
+        if (ign >= 0 && inputs->ignition_switch_level != mc_output_get_state(output, (uint8_t)ign)) {
+            mc_output_set(output, (uint8_t)ign, inputs->ignition_switch_level, MC_OUT_SRC_LOCAL);
+        }
+    }
+
     bool parked_guard = !inputs->engine_running && !ignition_is_live(output);
 
     switch (lock->state) {

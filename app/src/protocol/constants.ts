@@ -162,11 +162,11 @@ export const MCOTA_HEADER_BYTES = 140;
 
 /** AGENTS.md's "Exception: firmware update check/download" — the one
  * baked-in URL the app is permitted to reach outside of BLE, and the only
- * network calls it ever makes. Point this at wherever release manifests
- * are published (e.g. a GitHub Releases asset) before shipping; until
- * then it's a placeholder, same doctrine as mc_ota_release_key.c's
- * placeholder public key on the firmware side — a value with no real
- * release behind it yet is safer than guessing at one. */
+ * network calls it ever makes. downloadFirmwareBundle() (update/
+ * updateCheck.ts) trusts this constant's *host* as the sole basis for
+ * validating the manifest's bundle_url — the manifest and the bundle must
+ * be served from this same host (AGENTS.md: "these are the only two
+ * hosts-worth of traffic — in practice, one host"). */
 export const UPDATE_MANIFEST_URL =
   'https://github.com/silasboon/moto-ctrl/releases/latest/download/manifest.json';
 
