@@ -923,13 +923,13 @@ unavailable can still reply with a well-formed, zeroed frame carrying
 | Direction | Opcode | Payload |
 |---|---|---|
 | → device | `0x0A` `DIAG_GET` | — |
-| ← device | `0x8A` `DIAG_RESULT` | see §12.5 |
+| ← device | `0x8A` `DIAG_RESULT` | see §12.3 |
 | → device | `0x0B` `DIAG_GET_CONFIG` | — |
-| ← device | `0x8B` `DIAG_CONFIG` | see §12.6 |
-| → device | `0x0C` `DIAG_SET_CONFIG` | see §12.6 |
+| ← device | `0x8B` `DIAG_CONFIG` | see §12.4 |
+| → device | `0x0C` `DIAG_SET_CONFIG` | see §12.4 |
 | → device | `0x0D` `DIAG_GET_CALIB` | — |
-| ← device | `0x8D` `DIAG_CALIB` | see §12.7 |
-| → device | `0x0E` `DIAG_SET_CALIB` | see §12.7 |
+| ← device | `0x8D` `DIAG_CALIB` | see §12.6 |
+| → device | `0x0E` `DIAG_SET_CALIB` | see §12.6 |
 | → device | `0x0F` `DIAG_LEARN` | `channel:u8` (`0xFF` = every energized channel) |
 
 ### 12.1 Current-sense sampling and fault classification

@@ -125,9 +125,10 @@ The full feature set is implemented and tested:
   the sim (10ms tick); a fake NVS blob store makes config/keystore/lock/
   calibration persistence — and its corruption — real and reloadable via a
   simulated reboot; the sim-only debug channel + browser GUI (`sim/gui/`);
-  QEMU boot validation in CI (`firmware-qemu` job) — boots the real
-  cross-compiled binary and checks its boot-sequence log markers, but does
-  not and cannot validate BLE (see `docs/TESTING.md`).
+  and QEMU boot validation, which boots the real cross-compiled binary and
+  checks its boot-sequence log markers. QEMU is a local-only step — it is
+  **not** part of CI, and it does not and cannot validate BLE. See
+  `docs/TESTING.md` §5 before drawing conclusions from it.
 - **Lock / immobilizer** (`mc_lock`, `docs/PROTOCOL.md` §11): the
   four-state FSM (DISABLED/UNLOCKED/PARKED/LOCKED), edge-triggered
   phone-as-key auto-unlock, a salted-hash button cheat-code with

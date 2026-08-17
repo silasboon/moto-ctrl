@@ -11,8 +11,7 @@
  * channel.
  *
  * This is the maintainer's real OTA release public key, generated via
- * `tools/sign-firmware.py gen-key` (replacing this file's original
- * placeholder — see git history for that comment if you need it). The
+ * `tools/sign-firmware.py gen-key`. The
  * matching private key lives outside this repo; every release .bin is
  * signed locally with it via `tools/sign-firmware.py sign --input ...
  * --key <path> --output release.mcota` before publishing.

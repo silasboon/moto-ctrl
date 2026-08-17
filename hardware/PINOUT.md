@@ -89,7 +89,7 @@ Active-low. Each input: 2.2kΩ series + 10kΩ pullup to 3V3 + 10nF to GND.
 
 | Pin    | Status                                                        |
 |--------|---------------------------------------------------------------|
-| GPIO2  | Spare, ADC1-capable, routed to no net. Reserved: NTC board temp / 5V monitor / aux analog. Stub a driver. |
+| GPIO2  | Spare, ADC1-capable, routed to no net. Reserved: NTC board temp / 5V monitor / aux analog. No driver yet. |
 | GPIO19 | NC (USB D-; USB intentionally unused)                         |
 | GPIO20 | NC (USB D+)                                                   |
 | GPIO45 | NC (strapping, VDD_SPI — correct to leave unconnected)        |

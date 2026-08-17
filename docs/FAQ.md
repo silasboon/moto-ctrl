@@ -57,11 +57,20 @@ default terms.
 ## What phone / OS does the app need?
 
 The app is bare React Native (not Expo), using `react-native-ble-plx` for
-BLE. iOS uses `bluetooth-central` background mode with CoreBluetooth state
-restoration so phone-as-key can reconnect from a locked phone; Android uses
-a foreground-service-based reconnect that respects doze mode. No NFC/UWB
-"digital car key" style integration is planned — phone-as-key here is
-BLE-proximity based.
+BLE. A physical device is required — BLE doesn't work on the iOS Simulator
+or a stock Android emulator. No NFC/UWB "digital car key" style integration
+is planned; phone-as-key here is BLE-proximity based.
+
+**Current limitation:** background reconnect is not implemented yet. iOS
+CoreBluetooth state restoration (`restoreStateIdentifier` plus the
+`bluetooth-central` background mode) and an Android foreground service that
+respects doze mode are the intended design, so that phone-as-key can
+reconnect with the phone locked in your pocket — but neither is wired up
+today. In practice that means phone-as-key auto-unlock needs the app open
+and in the foreground. This is exactly why the immobilizer refuses to be
+enabled unless you have also configured a non-phone unlock method (the
+button cheat-code or an ignition-switch input) — see the dead-phone
+question above.
 
 ## Does the app need an internet connection or an account?
 

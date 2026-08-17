@@ -164,8 +164,7 @@ typedef enum {
 #define MC_OP_CONFIG_WRITE_RESULT 0x82/* device->client: [result:1] */
 
 /* --- OTA channel (docs/PROTOCOL.md §10). Requires an authenticated
- * session (unlike the pre-Phase-8 stub, which answered every frame
- * unconditionally). Images must be signed by the project's release key
+ * session. Images must be signed by the project's release key
  * (mc_ota_release_key.c) — this is in addition to, not instead of, the
  * session auth that gates the channel itself. BEGIN/REBOOT are rejected
  * unless the device is in a safe state (!engine_running &&

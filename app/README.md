@@ -105,6 +105,13 @@ Known MVP simplifications, not gaps in a safety requirement:
 - `MotoClient` polls status on an interval rather than relying on
   device-pushed notifications: real firmware only replies to an explicit
   `STATUS_GET` today (unlike the simulator's dev-convenience ticker).
+- **Background BLE reconnect is not implemented.** `BlePlxTransport`
+  constructs `BleManager` with no `restoreStateIdentifier`, there is no
+  `bluetooth-central` entry in `UIBackgroundModes`, and Android has no
+  foreground service. Phone-as-key auto-unlock therefore needs the app in
+  the foreground; it will not fire with the phone locked in a pocket. This
+  is the one gap that is load-bearing for the immobilizer, which is why a
+  non-phone unlock method is mandatory before it can be enabled.
 
 ## Development
 

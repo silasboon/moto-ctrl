@@ -46,7 +46,10 @@
 #define BOARD_BOOT_PIN 0 /* SW2: also the runtime factory-reset button (hold at power-on) */
 
 /* --- Reserved --- */
-#define BOARD_SPARE_ADC_GPIO 2 /* future NTC board-temp / 5V rail monitor; driver stub only */
+/* Reserved for a future NTC board-temp sensor / 5V rail monitor. Routed to
+ * no net on rev v1, and no driver reads it yet — the pin number is defined
+ * here so a future driver has one place to get it from. */
+#define BOARD_SPARE_ADC_GPIO 2
 
 /*
  * Strapping pins used as PROFET outputs: GPIO3 (OUT6 IN, U4 PROFET_IN6)
