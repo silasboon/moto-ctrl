@@ -4,6 +4,7 @@
 #include "freertos/task.h"
 
 #include "esp_log.h"
+#include "esp_ota_ops.h"
 #include "esp_task_wdt.h"
 #include "esp_timer.h"
 #include "nvs_flash.h"
@@ -640,5 +641,20 @@ void app_main(void)
     ESP_LOGI(TAG, "MOTO-CTRL boot: BLE stack started");
 
     xTaskCreate(app_task, "mc_app", 4096, NULL, 5, NULL);
+
+    /* CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y (sdkconfig.defaults) means
+     * every OTA-updated image boots in "pending verify" state: the
+     * bootloader treats the NEXT reset of an unconfirmed image as a boot
+     * failure and automatically reverts to the previously-confirmed OTA
+     * slot, no crash required — an ordinary press of the reset button was
+     * enough to silently roll back to old firmware. Confirming here, once
+     * every boot step above (config/output/lock restore, diagnostics,
+     * input, watchdog, BLE) has already completed without crashing, is
+     * this image's one required acknowledgment that it's good — skip it
+     * and the safety net never disarms, so *any* reset after an OTA
+     * update looks like this image failed. A no-op if the image was
+     * already confirmed (e.g. every non-OTA boot). */
+    esp_ota_mark_app_valid_cancel_rollback();
+
     ESP_LOGI(TAG, "MOTO-CTRL boot: app_main complete");
 }
