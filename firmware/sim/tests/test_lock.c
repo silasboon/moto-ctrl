@@ -416,6 +416,40 @@ static void test_ignition_switch_off_drops_ignition_and_locks(void)
     assert(fx.lock.state == MC_LOCK_ST_LOCKED);
 }
 
+/* Regression: layered unlock methods must compose as OR (AGENTS.md #3), not
+ * AND. A rider with both phone-as-key and an ignition switch configured
+ * unlocks via phone while the physical switch is sitting off; the switch
+ * must not fight that ignition back off just because its level currently
+ * disagrees with the output -- only an actual movement of the switch
+ * should act (see mc_lock_tick()'s ignition-switch-edge comment). Found by
+ * a real rider: unlocking from the phone parked the bike instead of
+ * powering ignition, because the (then level-checked, not edge-checked)
+ * switch mirror re-asserted "off" every single tick. */
+static void test_phone_unlock_survives_switch_left_off(void)
+{
+    lock_fixture_t fx;
+    fx_init_outputs(&fx);
+    fx_enable_with_cheatcode(&fx, 60000);
+    fx.lock.config.methods_mask = MC_LOCK_METHOD_PHONE | MC_LOCK_METHOD_IGNITION_SWITCH;
+    fx.lock.config.ignition_switch_input = 2;
+    assert(mc_lock_request_lock(&fx.lock, &fx.output, 0) == MC_LOCK_RESULT_OK);
+    assert(fx.lock.state == MC_LOCK_ST_LOCKED);
+
+    /* Unlock via phone, not the switch -- switch stays off throughout. */
+    assert(mc_lock_request_unlock(&fx.lock, &fx.output, 1000) == MC_LOCK_RESULT_OK);
+    assert(fx.lock.state == MC_LOCK_ST_UNLOCKED);
+    assert(mc_output_get_state(&fx.output, 5) == true);
+
+    /* Several ticks with the switch still off: ignition must stay on --
+     * the switch never moved, so it has nothing to say. */
+    mc_lock_inputs_t in = no_inputs();
+    for (uint32_t t = 1010; t < 1100; t += 10) {
+        mc_lock_tick(&fx.lock, &fx.output, t, &in);
+        assert(mc_output_get_state(&fx.output, 5) == true);
+    }
+    assert(fx.lock.state == MC_LOCK_ST_UNLOCKED);
+}
+
 /* --- interrupted-transition / fault recovery --- */
 
 static void test_simultaneous_unlock_triggers_are_idempotent(void)
@@ -1190,6 +1224,7 @@ int main(void)
     test_locking_while_phone_still_connected_stays_locked();
     test_tick_auto_unlocks_on_ignition_switch();
     test_ignition_switch_off_drops_ignition_and_locks();
+    test_phone_unlock_survives_switch_left_off();
 
     test_simultaneous_unlock_triggers_are_idempotent();
 

@@ -240,20 +240,38 @@ void mc_lock_tick(mc_lock_t *lock, mc_output_engine_t *output, uint32_t now_ms,
         return;
     }
 
-    /* Ignition-switch mode: outside LOCKED, the switch is authoritative for
-     * the ignition output itself, not just an unlock trigger. Turning the
-     * key off must drop ignition through the ordinary output path so
-     * parked_guard below sees it and the auto-lock grace timer can start —
-     * otherwise the switch could unlock the bike but never lock it again.
-     * While LOCKED the switch is a level checked below instead: turning it
-     * on unlocks (enter_unlocked() lights ignition itself); turning it off
-     * is already a no-op since ignition is already off. */
+    /* Ignition-switch mode: outside LOCKED, a *transition* of the switch
+     * drives the ignition output itself, not just an unlock trigger.
+     * Turning the key off must drop ignition through the ordinary output
+     * path so parked_guard below sees it and the auto-lock grace timer can
+     * start — otherwise the switch could unlock the bike but never lock it
+     * again (this is what the edge fires on, off->on or on->off).
+     *
+     * Deliberately an edge, not a level: AGENTS.md #3's methods compose as
+     * OR, never AND. A rider with both phone-as-key and an ignition switch
+     * configured who unlocks from the phone while the switch is sitting off
+     * must get ignition — a level check here would immediately fight that
+     * back off every tick, turning "one more optional unlock method" into
+     * "the switch must also be on", which is exactly backwards. Only an
+     * actual movement of the switch should act; a switch that's simply
+     * off-and-staying-off is silent, not authoritative.
+     *
+     * prev_ignition_switch_level is tracked unconditionally (below, every
+     * tick) so it's never stale by the time this becomes eligible to act —
+     * only the ACTION is gated by switch_active/not-LOCKED, not the
+     * tracking. While LOCKED the switch is a level checked below instead:
+     * turning it on unlocks (enter_unlocked() lights ignition itself);
+     * turning it off is already a no-op since ignition is already off. */
+    bool switch_now = inputs->ignition_switch_level;
+    bool switch_edge = switch_now != lock->prev_ignition_switch_level;
+    lock->prev_ignition_switch_level = switch_now;
+
     bool switch_active = (lock->config.methods_mask & MC_LOCK_METHOD_IGNITION_SWITCH) != 0 &&
                          lock->config.ignition_switch_input >= 0;
-    if (switch_active && lock->state != MC_LOCK_ST_LOCKED) {
+    if (switch_active && switch_edge && lock->state != MC_LOCK_ST_LOCKED) {
         int ign = mc_output_find_ignition_channel(&output->config);
-        if (ign >= 0 && inputs->ignition_switch_level != mc_output_get_state(output, (uint8_t)ign)) {
-            mc_output_set(output, (uint8_t)ign, inputs->ignition_switch_level, MC_OUT_SRC_LOCAL);
+        if (ign >= 0 && switch_now != mc_output_get_state(output, (uint8_t)ign)) {
+            mc_output_set(output, (uint8_t)ign, switch_now, MC_OUT_SRC_LOCAL);
         }
     }
 

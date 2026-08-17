@@ -2,7 +2,7 @@
 
 This file is the firmware ↔ hardware contract. All pin definitions in firmware must
 come from a single board-config header generated from this table. Source of truth:
-`hardware/releases/v2/` schematic.
+`hardware/releases/v1/` schematic.
 
 MCU: ESP32-S3-WROOM-1-N4. UART0 programming only (no USB — IO19/IO20 are
 intentionally unconnected). Manual boot entry: hold BOOT (SW2, IO0) and pulse

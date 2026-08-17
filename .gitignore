@@ -19,3 +19,4 @@ firmware/sim/build/
 *.swp
 .vscode/
 .idea/
+Testing/*

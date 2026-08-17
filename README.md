@@ -40,7 +40,7 @@ moto-ctrl/
 ├── app/                bare React Native + TypeScript companion app
 ├── hardware/           schematic, PCB design, gerbers, BOM (per hardware revision)
 │   ├── PINOUT.md        firmware ↔ hardware pin contract — read before touching pins
-│   └── releases/         e.g. releases/v2/, matching git tags
+│   └── releases/         e.g. releases/v1/, matching git tags
 ├── enclosure/          STL/STEP files (FDM ASA prototype, MJF PA12 production)
 ├── docs/               wiring guide, flashing guide, protocol spec, FAQ, hardware bench checklist
 ├── tools/              OTA release signing (sign-firmware.py), native app bootstrap

@@ -122,6 +122,19 @@ typedef struct {
     uint32_t last_attempt_ms;
     bool backoff_active; /* cached by mc_lock_tick(); status reads this directly, no now_ms needed */
 
+    /* Last-seen ignition_switch_level, RAM only, tracked every tick
+     * regardless of state or whether the method is even enabled — so it's
+     * never stale by the time a later tick needs it. mc_lock_tick() mirrors
+     * the switch onto the ignition output only on a genuine *transition* of
+     * this value, not on every tick the two happen to differ: layered
+     * unlock (AGENTS.md #3) requires the methods to compose as OR, so an
+     * off switch must not keep fighting an ignition another method (phone)
+     * legitimately turned on — it only acts when the rider actually moves
+     * the switch. Zero-initialized (matches an off switch) by mc_lock_init;
+     * a switch already ON at boot costs one harmless redundant mc_output_set
+     * on the first tick, not a real correctness issue. */
+    bool prev_ignition_switch_level;
+
     /* Set whenever persisted state ({config, locked_flag}) changed and the
      * platform should call mc_lock_serialize() + save it. Cleared by
      * mc_lock_clear_dirty(). Lock/cheat-code changes are rare and
@@ -175,9 +188,12 @@ void mc_lock_init(mc_lock_t *lock, const mc_lock_config_t *config, bool persiste
  * UNLOCKED <-> PARKED <-> LOCKED transitions (engine/ignition guards, the
  * auto-lock grace timer), passive auto-unlock via the ignition switch, the
  * cheat-code entry timeout, and the backoff quiet-period reset. Also, outside
- * LOCKED, mirrors an active ignition-switch input's level onto the ignition
- * output itself (mc_output_set()), so turning the key off actually drops
- * ignition and lets the parked-guard/auto-lock timer see it. */
+ * LOCKED, mirrors an active ignition-switch input's *transitions* onto the
+ * ignition output itself (mc_output_set()), so turning the key off actually
+ * drops ignition and lets the parked-guard/auto-lock timer see it — edge-
+ * triggered, not level-held, so a switch left off doesn't keep fighting an
+ * ignition another unlock method (phone) legitimately turned on (AGENTS.md
+ * #3: methods compose as OR, never AND). */
 void mc_lock_tick(mc_lock_t *lock, mc_output_engine_t *output, uint32_t now_ms,
                   const mc_lock_inputs_t *inputs);
 

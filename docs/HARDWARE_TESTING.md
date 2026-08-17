@@ -262,7 +262,7 @@ Only after everything above passes on the bench:
 
 | Field | Value |
 |---|---|
-| Hardware revision | (`hardware/PINOUT.md`'s revision, e.g. v2) |
+| Hardware revision | (`hardware/PINOUT.md`'s revision, e.g. v1) |
 | Firmware version | |
 | Tester | |
 | Date | |
