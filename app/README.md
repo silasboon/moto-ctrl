@@ -12,11 +12,10 @@ narrow exception). BLE/key logic must go through the `Transport` interface.
   WebSocket sim frame it differently — see `docs/PROTOCOL.md` §1) and its
   two implementations:
   - `SimTransport` — talks to `firmware/sim/` over WebSocket. Used for all
-    local dev and CI, since no board exists yet.
-  - `BlePlxTransport` — real hardware, via `react-native-ble-plx`.
-    **Unverified**: there's no board and no generated native project to run
-    it against (see `NATIVE_SETUP.md`) — needs bench verification once
-    hardware exists (`docs/HARDWARE_TESTING.md`).
+    local dev and CI, so neither needs a board attached.
+  - `BlePlxTransport` — real hardware, via `react-native-ble-plx`. Verified
+    against a v1 board; re-check it per release with
+    `docs/HARDWARE_TESTING.md`.
 - `src/protocol/` — the real wire protocol (`docs/PROTOCOL.md`), transport-
   agnostic: `constants.ts` (opcodes/channels, mirrors `mc_protocol.h` by
   hand — deliberately excludes the simulator-only debug channel), `frames.ts`
@@ -32,31 +31,45 @@ narrow exception). BLE/key logic must go through the `Transport` interface.
   `docs/PROTOCOL.md` §10.5 and `CONTRIBUTING.md`'s "No cloud, no telemetry,
   no accounts" section), kept in its own module deliberately separate from
   `src/protocol/` (BLE/simulator wire protocol only).
-- `src/screens/` — `PairingScreen`, `DashboardScreen` (status + output
-  control together, plus a quick lock/unlock action, a battery/fault/
-  low-voltage-cutoff indicator, and a Hazard button), `PinMapperScreen`
-  (also edits each channel's mode — on/off, PWM dimming, turn-signal blink,
-  brake flasher — plus the brake-switch input and flasher timing settings),
-  `KeysScreen`, `LockScreen` (immobilizer enable/methods, cheat-code
-  set/clear/test, ownership transfer), `DiagnosticsScreen` (live
-  per-channel current + fault, learnable open-load/overcurrent thresholds,
-  low-voltage-cutoff and engine-running voltage config, board calibration),
-  `FirmwareUpdateScreen` (checks for/downloads/transfers a signed OTA
-  update, then applies it on request), and `EventLogScreen` (read-only
-  viewer for the device's persisted security/safety event log). Switched
-  via local state in `App.tsx`, no navigation library (see `App.tsx`'s
-  header comment for why).
-- `ios/`, `android/` — **not committed yet**, see
-  [`NATIVE_SETUP.md`](NATIVE_SETUP.md).
+- `src/screens/` — `PairingScreen` finds and authenticates a board.
+  `DashboardScreen` ("Ride") is the landing screen: status, output control,
+  a quick lock/unlock action, a battery/fault/low-voltage-cutoff indicator,
+  and a Hazard button. Everything else sits one tap away behind
+  `SettingsScreen`, the hub reached from Ride's settings button:
+  - `OutputsScreen` — name each of the 12 channels, pick its behaviour
+    (toggle, momentary, blink, flasher) and PWM dimming, and set the role
+    flags that carry real firmware behaviour (`essential`, `is_ignition`,
+    `is_starter`, `is_brake`).
+  - `ButtonsScreen` — name the 8 inputs and bind single/double/hold presses
+    and chords to output channels or turn/hazard actions, with an
+    identify-by-pressing flow (`INPUT_LEARN`).
+  - `BoardScreen` — settings about the board itself (currently its name).
+  - `KeysScreen`, `LockScreen` (immobilizer enable/methods, cheat-code
+    set/clear/test, ownership transfer).
+  - `DiagnosticsScreen` — live per-channel current + fault, learnable
+    open-load/overcurrent thresholds, low-voltage-cutoff and
+    engine-running voltage config, board calibration.
+  - `FirmwareUpdateScreen` (checks for/downloads/transfers a signed OTA
+    update, then applies it on request), `EventLogScreen` (read-only viewer
+    for the device's persisted security/safety event log), and
+    `BoardInfoCard` (firmware version + uptime, shown atop Settings).
+
+  Screens are switched via local state in `App.tsx` — no navigation library
+  (see `App.tsx`'s header comment for why). Leaving a screen with unsaved
+  edits routes through `src/ui/NavGuard.tsx`, so an edge-swipe back gets the
+  same confirmation the screen's own Back chevron does.
+- `ios/`, `android/` — the committed bare-RN native projects (bundle ID
+  `com.motoctrl.app`, BLE permissions configured). See
+  [`NATIVE_SETUP.md`](NATIVE_SETUP.md) to build or regenerate them.
 
 ## Status
 
-Pairing, dashboard, pin mapper, output control, the lock/immobilizer
+Pairing, dashboard, output and button configuration, the lock/immobilizer
 screen, diagnostics, turn-signal/hazard/brake-flasher/PWM control, firmware
 updates, and the event log viewer are all implemented against
 `SimTransport` and verified against a real `firmware/sim/` instance (see
-Testing below). `BlePlxTransport` is written but unverified — no hardware
-exists yet.
+Testing below), and `BlePlxTransport` has been exercised against a real
+board over BLE.
 
 The cheat-code is write-only from the app's perspective by design — the
 device only ever reports whether one is set and how long it is (never the
@@ -72,21 +85,20 @@ set of ops (`DIAG_GET_CALIB`/`DIAG_SET_CALIB`) that never rides a config
 export/import or gets cleared by ownership transfer, since it describes the
 physical board, not the owner.
 
-Flasher/PWM config (mode, duty, auto-cancel/blink/pulse timing,
+Flasher/PWM config (behaviour, duty, auto-cancel/blink/pulse timing,
 brake-switch input) is different from both of the above: it rides the
-generic config JSON exclusively (`PinMapperScreen`, alongside
-function/name — output config never had its own dedicated wire channel to
-begin with, unlike lock/diagnostics). The one dedicated opcode here is
-`hazardPress()` — a plain turn-signal toggle is still just `setOutput()`
-on the `turn_l`/`turn_r`-function channel; mutual exclusion and the
-auto-cancel timer are applied device-side, not by this app.
+generic config JSON exclusively (`OutputsScreen`, alongside name and role
+flags — output config never had its own dedicated wire channel, unlike
+lock/diagnostics). The one dedicated opcode here is `hazardPress()` — a
+plain turn-signal toggle is still just `setOutput()` on a channel whose
+`indicator` is set to left or right; mutual exclusion and the auto-cancel
+timer are applied device-side, not by this app.
 
 Known MVP simplifications, not gaps in a safety requirement:
 
 - Enrolling a second phone is done by pasting its base64 public key (shown
   on its own Pairing screen) into the first phone's Keys screen — no QR/
-  camera flow, to avoid another native dependency this environment can't
-  verify.
+  camera flow, to avoid pulling in a camera dependency for a one-off step.
 - The phone's private key lives in AsyncStorage, not the iOS Keychain /
   Android Keystore — a deliberate initial simplification, not yet
   revisited.
@@ -112,7 +124,6 @@ first, or it skips gracefully:
 cd ../firmware/sim && cmake -S . -B build && cmake --build build
 ```
 
-Running on a device/simulator (`npm run ios` / `npm run android`) requires
-the native projects — see [`NATIVE_SETUP.md`](NATIVE_SETUP.md) first. No
-device/native-project run has been done in this environment; typecheck,
-lint, and the test suites above are what's been verified.
+Running on a device (`npm run ios` / `npm run android`) needs Xcode or the
+Android SDK — see [`NATIVE_SETUP.md`](NATIVE_SETUP.md). BLE needs a physical
+device; it does not work on the iOS Simulator or a stock Android emulator.

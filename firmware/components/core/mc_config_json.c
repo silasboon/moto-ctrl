@@ -65,7 +65,7 @@ static mc_indicator_side_t indicator_from_string(const char *s)
  *
  *   ignition      -> is_ignition + essential
  *   brake         -> is_brake    + essential
- *   headlight_hi  -> essential          (this is the AGENTS.md #1 case)
+ *   headlight_hi  -> essential          (this is the ride-safe failure case)
  *   headlight_lo  -> essential
  *   turn_l        -> indicator=left  + hazard_member
  *   turn_r        -> indicator=right + hazard_member

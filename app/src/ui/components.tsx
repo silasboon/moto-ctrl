@@ -2,7 +2,7 @@
  * Shared UI primitives, built on the tokens in theme.ts.
  *
  * Deliberately plain React Native — no UI library. Every dependency in this
- * app has to be justified against AGENTS.md's native-linking constraint (see
+ * app has to be justified against the cost of native linking (see
  * BlePlxTransport's header), and a component kit is a lot of surface area for
  * a dozen screens. These are small enough to read in one sitting.
  *
@@ -71,9 +71,9 @@ import {
  * windowSoftInputMode=adjustResize on Android (already set in
  * AndroidManifest.xml). Without it there is nowhere to scroll to.
  *
- * ⚠ The Android half is bench-unverified. This app targets SDK 36, where
- * Android 15+ enforces edge-to-edge and stops honouring adjustResize
- * directly; React Native re-applies it from the IME window insets instead, so
+ * UNVERIFIED: the Android half has not been bench-checked. This app targets
+ * SDK 36, where Android 15+ enforces edge-to-edge and stops honouring
+ * adjustResize directly; React Native re-applies it from the IME window insets instead, so
  * the behaviour should be unchanged, but that has only been reasoned about
  * here, not observed. If a field ends up behind the keyboard on an Android
  * 15+ device, the fix is to let KeyboardAvoidingView run there too — but
@@ -410,7 +410,7 @@ export function RoundIconButton({
 
 /** Pill-shaped multi/single select. Used anywhere a <Picker> would be — bare
  * RN has no picker in core and a community one is another native dependency
- * (see PinMapperScreen's header). */
+ * (see this file's header). */
 export function Chip({
   label,
   active,
@@ -463,7 +463,7 @@ export function Chip({
 }
 
 /** Dropdown select. Bare RN has no picker in core and a community one is
- * another native dependency this project can't verify (see PinMapperScreen's
+ * another native dependency this project can't verify (see this file's
  * header), so this is a Modal-backed sheet: a closed row showing the current
  * value, opening to a list of options with the selected one marked.
  *

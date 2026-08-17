@@ -50,7 +50,7 @@ static mc_event_log_t s_event_log;
 static mc_app_t s_app;
 static mc_input_engine_t s_input;
 
-/* Debounced-write schedulers respecting NVS flash wear (AGENTS.md). Lock
+/* Debounced-write schedulers respecting NVS flash wear. Lock
  * state is NOT debounced here — see persist_lock_cb: lock/cheat-code
  * changes are rare and security-relevant enough to persist immediately. */
 static mc_persist_scheduler_t s_persist_config;
@@ -215,7 +215,7 @@ static void momentary_tick(uint32_t t)
         if (held != mc_output_get_state(&s_output, ch)) {
             /* MC_OUT_SRC_LOCAL: this is the hardware-button path, so a
              * momentary starter binding is permitted here where the app's
-             * remote SET_OUTPUT stays blocked (AGENTS.md #6). The interlock
+             * remote SET_OUTPUT stays blocked (starter protection). The interlock
              * and engine-running guards still apply inside mc_output_set(),
              * and a rejected "on" simply leaves the channel off. */
             mc_output_set(&s_output, ch, held, MC_OUT_SRC_LOCAL);
@@ -228,7 +228,7 @@ static void momentary_tick(uint32_t t)
  * generic combos[] matcher so every binding path enforces identical policy:
  * every output change goes through mc_output_set() with MC_OUT_SRC_LOCAL,
  * which is where the immobilizer, the starter remote/engine-running/interlock
- * guards (AGENTS.md #6) and turn mutual exclusion actually live. Returns
+ * guards (starter protection) and turn mutual exclusion actually live. Returns
  * true if `action` was recognised. */
 static bool dispatch_action(mc_action_id_t action, uint32_t t)
 {
@@ -331,8 +331,8 @@ static void app_task(void *arg)
         /* Ticked first so mc_diag's mc_output_get_actual_state() calls this
          * same tick already see the current blink phase, and so
          * mc_lock sees this same tick's freshest engine_running
-         * (voltage-derived, AGENTS.md #6) when it evaluates its
-         * parked-detection guard (AGENTS.md #2). */
+         * (voltage-derived, starter protection) when it evaluates its
+         * parked-detection guard (the parked-only lock rule). */
         mc_output_tick(&s_output, t);
 
         /* Brake-lever/pedal switch pass-through: a maintained
@@ -420,12 +420,12 @@ static void app_task(void *arg)
                  * action_suppressed means a chord containing this button
                  * already fired, so only the chord's actions run — see
                  * mc_input.h. Note the cheat-code feed above deliberately
-                 * ignores that flag (AGENTS.md #3). */
+                 * ignores that flag (layered unlock). */
                 /* An app capturing a cheat-code asks for its presses not to
                  * fire bindings (docs/PROTOCOL.md §14.1) — otherwise setting
                  * a code that uses the horn button sounds the horn once per
                  * press. Note this is checked AFTER the cheat-code feed
-                 * above, which is never suppressible (AGENTS.md #3). */
+                 * above, which is never suppressible (layered unlock). */
                 if (!evt.data.press.action_suppressed &&
                     !gatt_svr_input_actions_suppressed()) {
                     dispatch_action_list(actions_for_press(evt.data.press.button, evt.data.press.type), t);
@@ -451,7 +451,7 @@ static void app_task(void *arg)
          * expiring inside mc_output_tick() with no command involved at all
          * — a single diff-and-sync catches all of these uniformly rather
          * than needing a persist call at every individual mutation site
-         * (AGENTS.md #1: outputs must restore from persisted state, so
+         * (ride-safe failure: outputs must restore from persisted state, so
          * every one of these has to actually reach NVS). s_output.config is
          * the live truth (mc_output_init() copied it out of s_config.outputs
          * once at boot; they've diverged on every commanded_on change since). */
@@ -508,15 +508,15 @@ void app_main(void)
     ESP_ERROR_CHECK(nvs_err);
     ESP_LOGI(TAG, "MOTO-CTRL boot: NVS init done");
 
-    /* AGENTS.md #3's physical factory reset. Only ARMS here — the watching
+    /* layered unlock's physical factory reset. Only ARMS here — the watching
      * happens on the app tick, for a few seconds only (see factory_reset.h
      * for why a check at power-on could never actually be triggered by hand).
-     * Adds no delay to boot, which AGENTS.md #1's <250ms output restore
+     * Adds no delay to boot, which ride-safe failure's <250ms output restore
      * budget would not tolerate. */
     factory_reset_init();
 
     /* Config + keystore: degrade to defaults/empty on any NVS failure rather
-     * than aborting (AGENTS.md #1 — never let an error path drop outputs). */
+     * than aborting (ride-safe failure — never let an error path drop outputs). */
     mc_config_default(&s_config);
     if (nvs_config_hal_init() == ESP_OK) {
         mc_config_result_t r = mc_config_load(nvs_config_hal_get(), &s_config);
@@ -538,7 +538,7 @@ void app_main(void)
     }
 
     /* Safety-critical: restore outputs from persisted state ASAP after boot
-     * (AGENTS.md #1, <250ms). */
+     * (ride-safe failure, <250ms). */
     mc_output_init(&s_output, &s_config.outputs, output_hal_gpio_get());
     mc_output_restore_from_config(&s_output);
     ESP_LOGI(TAG, "outputs restored from persisted config");
@@ -547,7 +547,7 @@ void app_main(void)
     /* Lock state: degrade to disabled/unlocked on any NVS failure, same
      * doctrine as config/keystore above — never guess into an immobilized
      * boot. Must run after mc_output_restore_from_config() (mc_lock_init
-     * reads whether ignition is currently live, per AGENTS.md #1's
+     * reads whether ignition is currently live, per ride-safe failure's
      * ride-safe restore override) and before app_task starts. */
     mc_lock_config_t lock_cfg;
     bool locked_flag = false;

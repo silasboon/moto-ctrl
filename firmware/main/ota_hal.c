@@ -27,10 +27,9 @@ static const char *TAG = "mc_ota_hal";
  * gaps app_task's own vTaskDelay(10ms) leaves, since app_task always
  * preempts a lower-priority task. This makes an OTA transfer slower than a
  * naive inline write would be; that's the intended trade — correctness of
- * the safety-critical loop over OTA throughput. This entire design is
- * unverified in this dev environment (no ESP-IDF toolchain, no hardware,
- * no FreeRTOS scheduler to actually observe preemption on) — see
- * docs/TESTING.md / HARDWARE_TESTING.md.
+ * the safety-critical loop over OTA throughput. No host test can cover this:
+ * the preemption behaviour it depends on only exists under a real FreeRTOS
+ * scheduler, so it is bench-only — see docs/TESTING.md / HARDWARE_TESTING.md.
  */
 
 typedef enum { OTA_REQ_BEGIN, OTA_REQ_WRITE, OTA_REQ_FINALIZE, OTA_REQ_ABORT } ota_req_kind_t;

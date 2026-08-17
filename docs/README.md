@@ -10,4 +10,4 @@ User- and protocol-facing documentation, licensed under CC BY-NC-SA 4.0 (see
 | [`WIRING.md`](WIRING.md) | Wiring guide for installing MOTO-CTRL on a motorcycle |
 | [`FLASHING.md`](FLASHING.md) | UART0 flashing guide, manual BOOT/EN sequence (no USB, no auto-reset) |
 | [`FAQ.md`](FAQ.md) | Frequently asked questions |
-| [`HARDWARE_TESTING.md`](HARDWARE_TESTING.md) | Bench validation checklist, per release — unexecuted, no board built yet |
+| [`HARDWARE_TESTING.md`](HARDWARE_TESTING.md) | Bench validation checklist — worked through on v1 hardware; re-run per release |

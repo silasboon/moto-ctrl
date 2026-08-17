@@ -3,7 +3,7 @@
 /*
  * mc_keystore — the set of enrolled phone public keys (paired phones).
  *
- * Holds ONLY Ed25519 public keys (AGENTS.md safety requirement #4: the
+ * Holds ONLY Ed25519 public keys (phone-as-key auth: the
  * device never stores anything that could unlock it if the flash is
  * dumped). Supports multiple paired phones, per-key revocation, and a full
  * wipe for the ownership-transfer flow.

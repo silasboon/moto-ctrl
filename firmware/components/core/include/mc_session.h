@@ -7,9 +7,7 @@
  * WebSocket connection). It owns that connection's authentication state:
  * unauthenticated clients may only read status and run the
  * challenge-response / first-key enrollment; everything that changes state
- * (control, config write) requires an authenticated session (AGENTS.md:
- * "All state-changing writes require the session to be authenticated via
- * the challenge-response").
+ * (control, config write) requires an authenticated session.
  *
  * Shared device state (output engine, config, keystore) lives in a single
  * mc_app_t that every session points at. Transports call mc_session_handle()
@@ -141,8 +139,8 @@ typedef struct {
      *
      * Deliberately does NOT gate the cheat-code matcher itself
      * (mc_lock_cheatcode_press) or the brake-switch pass-through: the first
-     * is AGENTS.md #3's unlock fallback and must never be disableable from
-     * the app, the second is AGENTS.md #5's brake-light guarantee. */
+     * is layered unlock's unlock fallback and must never be disableable from
+     * the app, the second is brake-light priority's brake-light guarantee. */
     bool input_learn_suppress_actions;
 } mc_session_t;
 

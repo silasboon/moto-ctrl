@@ -219,7 +219,7 @@ export class MotoClient {
    * another phone's — shared out-of-band — once this session is already
    * authenticated; docs/PROTOCOL.md §6). Only ever needs a public key,
    * never a full Keypair: this device never has another phone's private
-   * key, by design (AGENTS.md safety requirement #4). */
+   * key, by design (phone-as-key auth). */
   async enroll(publicKey: Uint8Array, label: string): Promise<AuthOutcome> {
     const labelBytes = utf8Encode(label).subarray(0, 23);
     const reply = await this.request(
@@ -275,7 +275,7 @@ export class MotoClient {
     return result;
   }
 
-  /** Toggles hazards — both TURN_L and TURN_R together, bypassing
+  /** Toggles hazards — both indicator sides together, bypassing
    * the mutual exclusion a plain setOutput() on a turn channel applies
    * device-side, and arming no auto-cancel timer (hazards stay on until
    * pressed again). REJECTED if neither channel is configured. */
@@ -698,7 +698,7 @@ export class MotoClient {
     return outcome(reply.body[1]!);
   }
 
-  /** REJECTED while the immobilizer is enabled (AGENTS.md #3: the
+  /** REJECTED while the immobilizer is enabled (layered unlock: the
    * mandatory fallback can't be removed out from under an active
    * immobilizer) — disable it first. */
   async cheatcodeClear(): Promise<ResultOutcome> {

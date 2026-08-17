@@ -1,8 +1,7 @@
 /**
  * Firmware update (docs/PROTOCOL.md §10, §10.5). Checks the one
- * baked-in update-check URL (AGENTS.md's "Exception: firmware update
- * check/download" — the only network call this app ever makes outside
- * BLE), downloads the signed `.mcota` bundle if the rider chooses to
+ * baked-in update-check URL (the only network call this app ever makes
+ * outside BLE), downloads the signed `.mcota` bundle if the rider chooses to
  * update, and drives the OTA transfer over BLE via MotoClient.
  *
  * Reboot is a separate, explicit step after a successful transfer (mirrors
@@ -11,7 +10,7 @@
  *
  * A failed manifest/bundle fetch is shown as "unable to check for
  * updates," never as a screen-blocking error — this network path is
- * optional and must never degrade BLE control of the board (AGENTS.md).
+ * optional and must never degrade BLE control of the board.
  */
 import React, { useCallback, useEffect, useState } from 'react';
 import {

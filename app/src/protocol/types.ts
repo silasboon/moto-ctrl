@@ -182,7 +182,7 @@ export interface OutputsConfig {
   starter_interlock_input: number;
   /** Input index (0-7) assigned as the brake lever/pedal switch, or
    * -1 for none — mirrors starter_interlock_input. A level, not a press
-   * event; the firmware drives the BRAKE-function channel from it directly. */
+   * event; the firmware drives the `is_brake` channel from it directly. */
   brake_switch_input: number;
   /** 0 = a turn signal never auto-cancels (manual toggle only). */
   turn_auto_cancel_ms: number;
@@ -200,7 +200,7 @@ export interface OutputsConfig {
  * (camelCase), which is the shape used by the dedicated
  * DIAG_GET_CONFIG/DIAG_SET_CONFIG binary wire ops that DiagnosticsScreen
  * actually edits through — this one only matters for a full config
- * export/import round-trip (PinMapperScreen-style raw JSON editing). */
+ * export/import round-trip (OutputsScreen-style raw JSON editing). */
 export interface DiagChannelJsonConfig {
   open_load_ma: number;
   overcurrent_ma: number;
@@ -438,8 +438,8 @@ export interface FirmwareBundle {
   image: Uint8Array;
 }
 
-/** The update-check manifest (docs/PROTOCOL.md §10.5) fetched from
- * AGENTS.md's baked-in update-check URL. */
+/** The update-check manifest (docs/PROTOCOL.md §10.5), fetched from the
+ * baked-in UPDATE_MANIFEST_URL in protocol/constants.ts. */
 export interface UpdateManifest {
   version: string;
   changelog: string;

@@ -2,15 +2,14 @@
  * Outputs: name each of the 12 channels, pick what it does, and mark the few
  * roles that carry real behaviour.
  *
- * Replaces the old pin mapper, which asked the rider to choose a `function`
- * from a fixed taxonomy (headlight_hi, horn, aux, ...) crossed with a `mode`
- * (on/pwm/flash_turn/flash_brake), both as flat chip rows. That conflated two
- * unrelated questions, offered labels that did nothing, and — worst — hid a
- * safety property inside a label: a channel was only protected from the
- * low-voltage cutoff if it happened to be tagged as a headlight.
+ * A free-text name, one behaviour dropdown, and explicit role switches.
+ * Naming and behaviour are kept as separate questions, and only roles that
+ * actually change firmware behaviour are offered, each saying what it does.
  *
- * Now: a free-text name, one behaviour dropdown, and explicit role switches.
- * Only roles that change firmware behaviour exist, and each says what it does.
+ * Roles are switches rather than implied by a name on purpose: a safety
+ * property must never hide inside a label, where a channel would be
+ * protected from the low-voltage cutoff only if the rider happened to call
+ * it a headlight.
  */
 import React, { useEffect, useMemo, useState } from 'react';
 import { Pressable, StyleSheet, Switch, Text, View } from 'react-native';
@@ -242,7 +241,7 @@ export function OutputsScreen({ client, onDone }: Props): React.JSX.Element {
     status ? isOutputOn(status, ch) : false;
   const faultOn = (ch: number): boolean =>
     status ? (status.outputFaultMask & (1 << ch)) !== 0 : false;
-  /* A locked bike switches nothing on (AGENTS.md #2), so the switches are
+  /* A locked bike switches nothing on, so the switches are
    * inert rather than offering commands the board will refuse. */
   const locked = status?.lockState === LOCK_STATE.LOCKED;
 

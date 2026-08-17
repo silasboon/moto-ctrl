@@ -64,16 +64,16 @@
 /* Direct per-channel output binding: action id MC_ACTION_OUTPUT_TOGGLE_BASE
  * + N toggles output channel N (0-indexed, N < MC_OUTPUT_COUNT). All 12
  * outputs are electrically identical, so a button binds to a channel
- * directly rather than going through the MC_OUT_FUNC_* indirection the three
- * ids above use — that indirection can't express "the second of three AUX
- * channels", because mc_output_find_channel_by_function() returns only the
+ * directly rather than going through the role-based lookup the three ids
+ * above use — that indirection can't express "the second of three AUX
+ * channels", because the mc_output_find_*_channel() helpers return only the
  * first match.
  *
  * Deliberately a reserved range in the existing uint16_t action id rather
  * than a new config field, so this adds no config schema version and older
  * configs stay valid (see mc_config.h's schema notes). The toggle still goes
  * through mc_output_set() with MC_OUT_SRC_LOCAL, which is what enforces the
- * immobilizer, the starter engine-running/interlock guards (AGENTS.md #6)
+ * immobilizer, the starter engine-running/interlock guards (starter protection)
  * and turn mutual exclusion — a binding can never bypass those. */
 #define MC_ACTION_OUTPUT_TOGGLE_BASE 0x100
 

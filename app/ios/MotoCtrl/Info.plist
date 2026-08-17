@@ -37,8 +37,8 @@
 	     signing the board's challenge nonce — a digital signature, which
 	     conceals nothing — and SHA-512 (FIPS 180-4) to verify a downloaded
 	     firmware bundle. Actual encryption comes from the OS: HTTPS via
-	     NSURLSession for the two update requests (AGENTS.md's sole network
-	     exception), and BLE Secure Connections in the radio stack. Neither
+	     NSURLSession for the two firmware-update requests (this app's only
+	     network access), and BLE Secure Connections in the radio stack. Neither
 	     is implemented by this app.
 
 	     REVISIT THIS if app code ever encrypts anything for confidentiality

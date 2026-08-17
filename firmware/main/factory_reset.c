@@ -32,7 +32,7 @@ static void set_all_outputs(bool on)
 
 /* Every output rail (and so every mirrored LED) blinking together, fast, is
  * not a pattern any configured lighting/signal function produces — that's
- * what makes it "distinct" per AGENTS.md #3 on hardware with no dedicated
+ * what makes it distinct on hardware with no dedicated
  * status LED. */
 static void confirm_blink(void)
 {

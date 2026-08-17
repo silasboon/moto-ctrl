@@ -124,7 +124,7 @@ static void apply_hal_state(mc_output_engine_t *eng, uint8_t channel, uint32_t n
     bool driven_on = mc_output_get_actual_state(eng, channel, now_ms);
     const mc_output_channel_config_t *ch = &eng->config.channels[channel];
     /* Dimming composes with any behaviour, but never with a pattern: BLINK
-     * and FLASHER are full on/off by AGENTS.md's PWM/flasher rule. */
+     * and FLASHER are full on/off by the PWM/flasher rule. */
     bool dimmed = ch->pwm_duty_pct < 100 &&
                   (ch->behaviour == MC_OUT_BEHAVIOUR_TOGGLE ||
                    ch->behaviour == MC_OUT_BEHAVIOUR_MOMENTARY);
@@ -243,7 +243,7 @@ static void apply_ignition_on(mc_output_engine_t *eng, uint32_t now_ms)
  *
  * This is a deliberate rider command with the bike stopped, not an error
  * path, so dropping the headlight here is correct and does not touch
- * AGENTS.md #1 (which protects those channels while the bike is RUNNING).
+ * ride-safe failure (which protects those channels while the bike is RUNNING).
  *
  * Hazard mode ends with it: leaving the flag set while every member is dark
  * would report running hazards on the status wire and make the next hazard
@@ -457,7 +457,7 @@ void mc_output_set_engine_running(mc_output_engine_t *eng, bool running)
     bool was_running = eng->engine_running;
     eng->engine_running = running;
 
-    /* AGENTS.md #6: the starter is inhibited while the engine is running.
+    /* starter protection: the starter is inhibited while the engine is running.
      * validate_starter_command() only enforces that at COMMAND time, which
      * leaves the case that actually matters — the starter is already
      * engaged and the engine catches. A cranking motor left engaged against

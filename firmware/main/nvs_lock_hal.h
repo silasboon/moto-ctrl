@@ -6,8 +6,8 @@
 /* Persists {lock config, locked_flag} in its own NVS namespace, separate
  * from mc_config and mc_keystore — same rationale as the keystore: the
  * cheat-code hash is security-sensitive and must never ride the exportable
- * JSON config backup (AGENTS.md #4 doctrine, applied to mc_lock — see
- * mc_lock.h). Call after nvs_flash_init(). */
+ * JSON config backup — same doctrine as the keystore, applied to mc_lock
+ * (see mc_lock.h). Call after nvs_flash_init(). */
 esp_err_t nvs_lock_hal_init(void);
 
 /* Loads the persisted lock config + locked_flag. If nothing is stored yet,

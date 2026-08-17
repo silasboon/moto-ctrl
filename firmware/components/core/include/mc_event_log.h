@@ -6,7 +6,7 @@
  * ESP-IDF dependency — storage goes through an injected HAL, exactly like
  * every other persisted module in this component.
  *
- * Scope is deliberately narrow (AGENTS.md's 7 safety requirements, not
+ * Scope is deliberately narrow (safety- and security-relevant events, not
  * routine operation): lock state transitions, key enroll/revoke/ownership-
  * transfer, factory reset, cheat-code lockout, OTA begin/success/failure,
  * low-voltage cutoff enter/exit. NOT routine output toggles or diagnostics

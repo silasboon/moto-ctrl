@@ -15,8 +15,8 @@
  * memcpy-of-the-struct binary format whose exact-size check
  * meant a schema bump (adding `diagnostics`, then growing
  * mc_output_config_t) could never carry an old blob forward — every
- * upgrade silently degraded to defaults instead (AGENTS.md #1's "fall back
- * to defaults on any load failure" boot behavior masked the gap, since no
+ * upgrade silently degraded to defaults instead (the "fall back to defaults
+ * on any load failure" boot behavior masked the gap, since no
  * hardware/OTA existed yet to make it matter). JSON's per-field parsing
  * with defaults for anything missing and tolerance of anything unrecognized
  * makes this naturally forward/backward-compatible for purely additive

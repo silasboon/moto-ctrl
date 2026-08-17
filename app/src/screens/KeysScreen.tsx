@@ -3,7 +3,7 @@
  * and enroll another phone by pasting the base64 public key its own
  * Pairing screen displays. This is a deliberate MVP simplification — no
  * QR/camera flow, no extra native dependency for it — not a gap in
- * AGENTS.md safety requirement #4 ("support multiple paired phones"),
+ * phone-as-key auth ("support multiple paired phones"),
  * which this still satisfies end to end.
  */
 import React, { useCallback, useEffect, useState } from 'react';

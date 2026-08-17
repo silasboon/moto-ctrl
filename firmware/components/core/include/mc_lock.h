@@ -1,8 +1,8 @@
 #pragma once
 
 /*
- * mc_lock — the immobilizer / lock state machine (AGENTS.md safety
- * requirements #2 and #3).
+ * mc_lock — the immobilizer / lock state machine: the parked-only lock
+ * rule and layered unlock.
  *
  * Four states: DISABLED (no immobilizer configured), UNLOCKED (riding/
  * idling), PARKED (stopped, auto-lock grace timer running), LOCKED
@@ -25,7 +25,7 @@
  *     mc_lock_request_unlock()'s doc comment for why this is an edge, not
  *     a level polled by mc_lock_tick().
  *   - Button cheat-code: ALWAYS active whenever the immobilizer is
- *     enabled — it is the mandatory fallback (AGENTS.md #3), never a
+ *     enabled — it is the mandatory fallback (layered unlock), never a
  *     toggle. Entered as a sequence of short button presses fed one at a
  *     time via mc_lock_cheatcode_press(). The code itself is never stored
  *     in cleartext (see mc_lock_config_t) or in this struct's RAM beyond
@@ -34,8 +34,8 @@
  *     IGNITION_SWITCH method bit is set.
  *
  * Cheat-code storage: a salted SHA-512 hash, in a dedicated blob (NOT part
- * of the exportable JSON config — same doctrine as mc_keystore, AGENTS.md
- * #4). Wrong-entry backoff is RAM-only (mc_lock_t is never partially
+ * of the exportable JSON config — same doctrine as mc_keystore's enrolled
+ * keys). Wrong-entry backoff is RAM-only (mc_lock_t is never partially
  * persisted) and gates only the cheat-code; phone-as-key and the
  * ignition-switch are unaffected by it.
  */
@@ -77,14 +77,11 @@ typedef struct {
  * without one. */
 typedef enum {
     MC_LOCK_CFG_OK = 0,
-    /* AGENTS.md #3: the immobilizer may not be enabled with the phone as the
-     * only way in. At least one non-phone method must be configured — the
-     * button cheat-code OR an ignition-switch input.
-     *
-     * Was ENABLE_REQUIRES_CHEATCODE, i.e. the code specifically. A rider with
-     * an OEM key switch wired to an input already has a physical fallback, and
-     * making them also set a code they will never use bought no safety. The
-     * invariant that matters — never only the phone — is unchanged. */
+    /* Layered unlock: the immobilizer may not be enabled with the phone as
+     * the only way in. At least one non-phone method must be configured —
+     * the button cheat-code OR an ignition-switch input. A rider with an OEM
+     * key switch wired to an input already has a physical fallback, so
+     * requiring a button code on top of it buys no safety. */
     MC_LOCK_CFG_ENABLE_REQUIRES_FALLBACK = 1u << 0,
     MC_LOCK_CFG_ENABLE_REQUIRES_IGNITION_CHANNEL = 1u << 1,
     MC_LOCK_CFG_BAD_IGNITION_SWITCH_INPUT = 1u << 2,
@@ -114,9 +111,9 @@ typedef struct {
     uint8_t entry_len;
     uint32_t entry_start_ms;
 
-    /* Wrong-entry backoff. RAM only (confirmed decision: resets on
-     * reboot — the cheat-code is a low-entropy convenience fallback, not
-     * the primary security boundary). */
+    /* Wrong-entry backoff. RAM only — resets on reboot, since the
+     * cheat-code is a low-entropy convenience fallback, not the primary
+     * security boundary. */
     uint16_t consecutive_wrong;
     uint32_t backoff_until_ms;
     uint32_t last_attempt_ms;
@@ -127,7 +124,7 @@ typedef struct {
      * never stale by the time a later tick needs it. mc_lock_tick() mirrors
      * the switch onto the ignition output only on a genuine *transition* of
      * this value, not on every tick the two happen to differ: layered
-     * unlock (AGENTS.md #3) requires the methods to compose as OR, so an
+     * unlock requires the methods to compose as OR, so an
      * off switch must not keep fighting an ignition another method (phone)
      * legitimately turned on — it only acts when the rider actually moves
      * the switch. Zero-initialized (matches an off switch) by mc_lock_init;
@@ -173,7 +170,7 @@ typedef enum {
 } mc_lock_cheatcode_outcome_t;
 
 /* Initializes `lock` at boot from persisted {config, locked_flag}, applying
- * the ride-safe restore rule (AGENTS.md #1): never restores into LOCKED
+ * the ride-safe restore rule: never restores into LOCKED
  * while the engine appears to be running or the ignition output is
  * already live (a brownout mid-ride must not immobilize a moving bike).
  * If the override fires, `lock->dirty` is set so the platform persists the
@@ -192,8 +189,8 @@ void mc_lock_init(mc_lock_t *lock, const mc_lock_config_t *config, bool persiste
  * ignition output itself (mc_output_set()), so turning the key off actually
  * drops ignition and lets the parked-guard/auto-lock timer see it — edge-
  * triggered, not level-held, so a switch left off doesn't keep fighting an
- * ignition another unlock method (phone) legitimately turned on (AGENTS.md
- * #3: methods compose as OR, never AND). */
+ * ignition another unlock method (phone) legitimately turned on (layered
+ * unlock: methods compose as OR, never AND). */
 void mc_lock_tick(mc_lock_t *lock, mc_output_engine_t *output, uint32_t now_ms,
                   const mc_lock_inputs_t *inputs);
 
@@ -210,7 +207,7 @@ mc_lock_result_t mc_lock_request_lock(mc_lock_t *lock, mc_output_engine_t *outpu
  *     mc_session.c exactly when a session's challenge-response *newly*
  *     succeeds — this is what makes phone-as-key work automatically, on
  *     the rising edge of "a phone just authenticated" (proximity/tap,
- *     AGENTS.md #4). It is deliberately NOT a level checked every tick:
+ *     phone-as-key auth). It is deliberately NOT a level checked every tick:
  *     a phone that stays connected (e.g. background BLE) would otherwise
  *     immediately re-unlock the bike on the very next tick after any
  *     explicit MC_OP_LOCK from that same still-connected session,
@@ -240,7 +237,7 @@ bool mc_lock_set_cheatcode(mc_lock_t *lock, const uint8_t *buttons, uint8_t len,
 /* MC_OP_CHEATCODE_CLEAR: refuses (returns false / REJECTED) while
  * config.immobilizer_enabled is true — the cheat-code is the mandatory
  * fallback and can't be removed out from under an active immobilizer
- * (AGENTS.md #3). Disable the immobilizer first. */
+ * (layered unlock). Disable the immobilizer first. */
 bool mc_lock_clear_cheatcode(mc_lock_t *lock, uint32_t now_ms);
 
 /* MC_OP_CHEATCODE_TEST: pure comparison against the stored hash. Never

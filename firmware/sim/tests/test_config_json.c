@@ -354,7 +354,7 @@ static void test_worst_case_config_fits_json_max(void)
 /* Every role a v5 `function` carried must survive the upgrade. The headlight
  * case is the important one: it was only ever protected from the low-voltage
  * cutoff because of its function tag, so the migration has to turn that into
- * an explicit `essential` or AGENTS.md #1 silently regresses. */
+ * an explicit `essential` or ride-safe failure silently regresses. */
 static void test_v5_functions_migrate_to_role_flags(void)
 {
     const char *v5 =

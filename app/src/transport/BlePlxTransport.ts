@@ -1,20 +1,18 @@
 /**
  * Real-hardware Transport implementation, via react-native-ble-plx.
  *
- * UNVERIFIED: there is no board and no generated native project
- * (app/ios, app/android — see NATIVE_SETUP.md) to run this against yet.
- * This is a mechanical translation of docs/PROTOCOL.md §2's GATT layout
- * into ble-plx calls — it needs real bench verification once hardware
- * exists (see docs/HARDWARE_TESTING.md). Do not treat a clean
- * typecheck as evidence this works on a real board.
+ * This translates docs/PROTOCOL.md §2's GATT layout into ble-plx calls. It
+ * has been exercised against a real board, but a clean typecheck is never
+ * evidence that it still does — re-check it on hardware per release, using
+ * docs/HARDWARE_TESTING.md.
  *
  * iOS CoreBluetooth state restoration (`restoreStateIdentifier`, so
  * phone-as-key reconnects from a locked phone) and Android's
- * foreground-service reconnect strategy (AGENTS.md "Stack choices") are
+ * foreground-service reconnect strategy are
  * NOT implemented here — that's background-reconnect hardening that's
  * actually load-bearing for the immobilizer (lock system). This transport
  * covers the foreground happy path: scan, connect, write, and be
- * notified — which is what the dashboard/pin mapper/pairing screens need.
+ * notified — which is what the dashboard/config/pairing screens need.
  */
 import {
   BleError,

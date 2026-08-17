@@ -1,24 +1,12 @@
 /**
- * Settings: the one hub screen behind the Ride screen's round settings
- * button. Used to be three separate tabs (Setup, Security, Settings) — with
- * the bottom tab bar gone in favour of Ride-as-landing-screen, three peer
- * hubs one tap apart no longer made sense as three *tabs*, but their
- * contents are still just lists of rows, so they became named sections of
- * this one list instead of merging into an undifferentiated pile. Nothing
- * here lost a destination; each row is a `SectionHeader` + `Card` group
- * instead of its own screen.
+ * Settings: the one hub screen behind the Ride screen's settings button.
+ * Every destination other than Ride and Pairing is reached from here, as a
+ * list of `SectionHeader` + `Card` groups, each row pushing one screen deep.
  *
- * Two sections, not the original three: Immobilizer and Paired keys read as
- * configuration (they're both "how this bike behaves"), not a separate
- * category of their own, so they moved into Configuration alongside Outputs
- * and Buttons rather than keeping their own Security heading. Board moved
- * the other way, into Device, next to the other read-the-hardware-state
- * items (Diagnostics, Firmware, Event log) rather than sitting with the
- * behavioural config.
- *
- * Disconnect lives here now too (out of the Ride screen's title bar, which
- * only needed room for the settings button), Board info stays as the
- * header above the sections, same as it was on the old Settings tab.
+ * Two sections. Configuration is "how this bike behaves" — Outputs, Buttons,
+ * Immobilizer, Paired keys. Device is "what the hardware is doing right
+ * now" — Board, Diagnostics, Firmware, Event log. Board info (version,
+ * uptime) is the header above both, and Disconnect sits at the bottom.
  */
 import React from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';

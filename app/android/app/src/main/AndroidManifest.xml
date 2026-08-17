@@ -2,7 +2,7 @@
 
     <uses-permission android:name="android.permission.INTERNET" />
 
-    <!-- BLE scan/connect (AGENTS.md: react-native-ble-plx transport).
+    <!-- BLE scan/connect, used by the react-native-ble-plx transport.
          Android 12+ (API 31+) uses BLUETOOTH_SCAN/BLUETOOTH_CONNECT;
          neverForLocation is safe here since the app only scans for a
          specific device name and never derives location from scan

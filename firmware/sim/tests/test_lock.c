@@ -1,7 +1,7 @@
 /*
  * mc_lock — the immobilizer state machine. This is the highest-scrutiny
- * area in the project (AGENTS.md: "extra test coverage — every state
- * transition"), so this file aims for full coverage of docs/PROTOCOL.md
+ * area in the project, so this file aims for full coverage of
+ * docs/PROTOCOL.md
  * §11's state diagram and truth table: every transition, every guard,
  * boot recovery from every persisted state, the cheat-code backoff policy,
  * and the wire-level dispatch of the COMMAND-channel opcodes.
@@ -142,7 +142,7 @@ static void test_boot_restores_locked_when_safe(void)
 
 static void test_boot_ride_safe_override_ignition_live(void)
 {
-    /* AGENTS.md #1: never boot into LOCKED while ignition is live — a
+    /* ride-safe failure: never boot into LOCKED while ignition is live — a
      * brownout mid-ride must restore the bike as running. */
     lock_fixture_t fx;
     fx_init_outputs(&fx);
@@ -416,7 +416,7 @@ static void test_ignition_switch_off_drops_ignition_and_locks(void)
     assert(fx.lock.state == MC_LOCK_ST_LOCKED);
 }
 
-/* Regression: layered unlock methods must compose as OR (AGENTS.md #3), not
+/* Regression: layered unlock methods must compose as OR, not
  * AND. A rider with both phone-as-key and an ignition switch configured
  * unlocks via phone while the physical switch is sitting off; the switch
  * must not fight that ignition back off just because its level currently
@@ -605,7 +605,7 @@ static void test_cheatcode_backoff_expires_and_unlock_still_works(void)
 
     /* And — crucially — the rider is never locked out forever: the phone
      * and ignition-switch methods were never gated by the cheat-code
-     * backoff at all (AGENTS.md #3). Demonstrate via request_unlock. */
+     * backoff at all (layered unlock). Demonstrate via request_unlock. */
     fx.lock.config.methods_mask = MC_LOCK_METHOD_PHONE;
     assert(mc_lock_request_unlock(&fx.lock, &fx.output, t) == MC_LOCK_RESULT_OK);
     assert(fx.lock.state == MC_LOCK_ST_UNLOCKED);
@@ -1058,7 +1058,7 @@ static void test_wire_status_reports_live_lock_state(void)
 
 /* --- 2026-08 immobilizer redesign --- */
 
-/* AGENTS.md #3 as amended: the phone may never be the only way in, but the
+/* Layered unlock: the phone may never be the only way in, but the
  * non-phone method can be either the cheat-code or a wired ignition switch.
  * A rider with an OEM key already has a physical fallback. */
 static void test_enable_accepts_ignition_switch_instead_of_cheatcode(void)

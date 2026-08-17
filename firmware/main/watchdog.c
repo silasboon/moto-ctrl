@@ -9,7 +9,7 @@
 /* Idle tasks stay subscribed, matching CONFIG_ESP_TASK_WDT_CHECK_IDLE_TASK_*.
  * A starved idle task means some higher-priority task is spinning and never
  * yielding, which on this board means outputs stop being ticked — exactly
- * the condition the watchdog exists to reboot us out of (AGENTS.md #1). */
+ * the condition the watchdog exists to reboot us out of (ride-safe failure). */
 #if CONFIG_FREERTOS_UNICORE
 #define MC_WDT_IDLE_CORE_MASK 0x1
 #else

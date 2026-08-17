@@ -9,8 +9,8 @@ find_package(Threads REQUIRED)
 
 # Host build of the MOTO-CTRL core (state machines + protocol + auth) against
 # a fake BLE transport (a self-contained WebSocket server), so the app and CI
-# can be developed and tested without hardware attached. See AGENTS.md /
-# docs/PROTOCOL.md.
+# can be developed and tested without hardware attached. See
+# docs/PROTOCOL.md and docs/TESTING.md.
 #
 # The core (mc_*) is plain C99 with no ESP-IDF dependency, so it is compiled
 # here from the same sources firmware/components/core/ registers as an

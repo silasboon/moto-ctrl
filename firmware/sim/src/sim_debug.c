@@ -150,9 +150,9 @@ static void send_state(sim_debug_ctx_t *ctx)
 /* Simulates an MCU reset: reloads config + keystore from the fake NVS
  * (exercising the same fallback-to-defaults path as firmware/main/main.c's
  * app_main() on real NVS-read failure) and re-runs
- * mc_output_restore_from_config(), timed against the AGENTS.md #1 <250ms
- * restore budget. Then drops the connection, since a real reboot drops the
- * BLE link. */
+ * mc_output_restore_from_config(), timed against the <250ms restore
+ * budget ride-safe failure requires. Then drops the connection, since a
+ * real reboot drops the BLE link. */
 static void force_reboot(sim_debug_ctx_t *ctx)
 {
     pthread_mutex_lock(&ctx->lock);
@@ -184,8 +184,8 @@ static void force_reboot(sim_debug_ctx_t *ctx)
     }
     *ctx->keystore = new_keystore;
 
-    /* Safety-critical: restore outputs from persisted state ASAP (AGENTS.md
-     * #1, <250ms). Re-use the existing hal (same fake GPIO sink). */
+    /* Safety-critical: restore outputs from persisted state ASAP (<250ms).
+     * Re-use the existing hal (same fake GPIO sink). */
     mc_output_hal_t hal = ctx->output->hal;
     mc_output_init(ctx->output, &ctx->config->outputs, hal);
     mc_output_restore_from_config(ctx->output);

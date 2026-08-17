@@ -14,11 +14,10 @@
  * any chunk is accepted) and hash-finalization happens synchronously inside
  * mc_ota_commit(), same shape as mc_session's config_commit().
  *
- * Trust model (AGENTS.md's "cryptographically sound" bar, applied here the
- * same way it's applied to phone-as-key): an image must be signed by the
- * project's release key (mc_ota_release_key.c, embedded at build time) in
- * ADDITION to arriving over an already-authenticated BLE session — either
- * alone is not sufficient. The signature covers a SHA-512 digest of the
+ * Trust model (the same cryptographic bar phone-as-key is held to): an image
+ * must be signed by the project's release key (mc_ota_release_key.c, embedded
+ * at build time) in ADDITION to arriving over an already-authenticated BLE
+ * session — either alone is not sufficient. The signature covers a SHA-512 digest of the
  * image, not the raw bytes: this device has no PSRAM to buffer a
  * multi-hundred-KB image before hashing it, so mc_ota_begin() verifies the
  * signature over the 64-byte digest instantly (before accepting any chunk
@@ -32,7 +31,7 @@
  * mc_output_lv_cutoff_active) — mc_ota.c never includes mc_output.h/
  * mc_diag.h itself, mirroring how mc_lock_inputs_t is assembled by the
  * platform rather than mc_lock reaching into other modules' globals. This
- * extends AGENTS.md's existing doctrine (starter protection gates on
+ * extends the existing doctrine (starter protection gates on
  * engine_running, low-voltage cutoff gates on battery voltage) to OTA:
  * flashing while riding or while the battery is critically low is refused.
  * mc_ota_reboot() re-checks at reboot time (not just at begin time) because
@@ -40,7 +39,7 @@
  * nothing is lost if the bike started moving between commit and reboot; the
  * client just retries OTA_REBOOT later.
  *
- * Ride-safe note (AGENTS.md #1): the currently-running firmware image is
+ * Ride-safe note: the currently-running firmware image is
  * untouched throughout the entire transfer/flash-to-inactive-partition
  * process (that's what the A/B partition scheme is for) — only
  * mc_ota_reboot() ever switches which image boots. On real hardware, flash

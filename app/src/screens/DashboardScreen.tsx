@@ -5,7 +5,7 @@
  *
  * Starter-function channels are shown as locked out rather than as a toggle
  * that will always be refused: mc_output rejects a remote starter command
- * outright (AGENTS.md #6), and presenting a dead switch is worse than
+ * outright (starter protection), and presenting a dead switch is worse than
  * presenting none. Same reasoning for hiding the lock button unless the bike
  * is actually in a state that can be locked.
  */
@@ -108,7 +108,7 @@ export function DashboardScreen({
       }
 
       /* Turn the key off before locking. mc_lock_request_lock() refuses
-       * while the ignition output is live (AGENTS.md #2), and unlocking
+       * while the ignition output is live, and unlocking
        * deliberately switched it on — so without this, a bike unlocked from
        * the app could never be locked again from the app. Doing it here
        * rather than relaxing the firmware guard keeps the invariant exactly
@@ -173,7 +173,7 @@ export function DashboardScreen({
       : `Phone unlock is off for this bike: ${ways.join(', or ')}.`;
   })();
   /* Locking is refused by the firmware while the engine runs or the ignition
-   * is live (AGENTS.md #2) — say so in advance rather than offering a button
+   * is live — say so in advance rather than offering a button
    * that returns REJECTED. */
   /* The ignition channel, so locking can switch it off first — see
    * quickLockToggle(). -1 when the config hasn't arrived or none is set. */

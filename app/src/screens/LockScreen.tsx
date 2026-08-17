@@ -3,10 +3,10 @@
  * disable the immobilizer, pick unlock methods, set the button cheat-code,
  * and transfer ownership.
  *
- * Follows PinMapperScreen's read-edit-save pattern for the config half, and
+ * Follows OutputsScreen's read-edit-save pattern for the config half, and
  * KeysScreen's pattern for the destructive-action confirmation half
  * (ownership transfer). No <Picker> — same chip-button convention as
- * PinMapperScreen.
+ * OutputsScreen.
  *
  * The cheat-code itself is write-only from the app's perspective: the
  * device only ever returns whether one is set and how long it is (never
@@ -371,7 +371,7 @@ export function LockScreen({
           }
         />
       </View>
-      {/* AGENTS.md #3: the phone may never be the only way in. Either
+      {/* layered unlock: the phone may never be the only way in. Either
        * fallback satisfies it, so a rider with an OEM key switch is not
        * forced to also set a code they will never use. */}
       {config.immobilizerEnabled && !hasNonPhoneFallback && (

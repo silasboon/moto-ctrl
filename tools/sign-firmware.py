@@ -10,8 +10,7 @@ Produces the same shapes the firmware and app already speak:
     firmware/sim/itest/moto-client.mjs's otaTransfer() and the app's
     MotoClient.uploadFirmware() parse this exact layout.
   - An optional update-manifest.json (docs/PROTOCOL.md §10.5), for the app's
-    baked-in update-check URL (AGENTS.md's "Exception: firmware update
-    check/download").
+    baked-in update-check URL.
 
 Two subcommands:
 

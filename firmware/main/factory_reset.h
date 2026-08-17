@@ -4,8 +4,9 @@
 #include <stdint.h>
 
 /*
- * factory_reset — the physical BOOT-hold factory reset (AGENTS.md #3:
- * "wipes bonds + config after a distinct LED pattern confirmation").
+ * factory_reset — the physical BOOT-hold factory reset: wipes bonds and
+ * config after a distinct confirmation pattern, so a rider whose phone is
+ * dead is never locked out of their own board.
  *
  * Why this is a post-boot window rather than a check at power-on.
  *
@@ -21,8 +22,9 @@
  * UART adapter, which is not good enough for a rider whose phone has died.
  *
  * The window can't simply become a blocking wait at boot either: that would
- * delay every ordinary boot, and AGENTS.md #1 requires outputs restored from
- * persisted state in under 250ms after a watchdog or brownout reboot.
+ * delay every ordinary boot, and ride-safe failure requires outputs
+ * restored from persisted state in under 250ms after a watchdog or
+ * brownout reboot.
  *
  * So arming happens at boot (free) and watching happens on the existing ~10ms
  * app tick, for a bounded few seconds only. After that this disarms
@@ -51,7 +53,7 @@ void factory_reset_init(void);
  *
  * On confirmation it blocks: this board's LEDs passively mirror the 12 output
  * rails (hardware/PINOUT.md — there is no independently-controllable status
- * LED), so the "distinct LED pattern" AGENTS.md asks for is all 12 outputs
+ * LED), so the distinct confirmation pattern is all 12 outputs
  * pulsing together, fast, well outside anything a lighting function produces.
  * It drives them through the raw output HAL, bypassing mc_output, and feeds
  * the task watchdog across the pattern. Then it erases the mc_cfg, mc_keys

@@ -330,7 +330,7 @@ static void test_chord_suppresses_member_single_press_actions(void)
             combo_count++;
         } else {
             /* The press event is still DELIVERED — that's what keeps the
-             * cheat-code working (AGENTS.md #3) — but flagged. */
+             * cheat-code working (layered unlock) — but flagged. */
             if (evt.data.press.action_suppressed) suppressed++;
             else unsuppressed++;
         }
@@ -373,7 +373,7 @@ static void test_chord_member_pressed_alone_still_binds(void)
     assert(presses == 1);
 }
 
-/* Regression guard for AGENTS.md #3: a chord must never be able to starve
+/* Regression guard for layered unlock: a chord must never be able to starve
  * the unlock cheat-code. Buttons 0 and 1 form both a chord AND the
  * cheat-code sequence; the sequence must still match, because suppression
  * only marks the event, never drops it. */
@@ -556,7 +556,7 @@ static void test_set_config_activates_a_newly_added_chord(void)
 
 /* A config write must not disturb a button that is currently held. Zeroing
  * the debounce state would make a held brake lever read as released and drop
- * the brake light — AGENTS.md #1 forbids a config import changing outputs. */
+ * the brake light — ride-safe failure forbids a config import changing outputs. */
 static void test_set_config_preserves_held_button_state(void)
 {
     mc_input_config_t cfg;

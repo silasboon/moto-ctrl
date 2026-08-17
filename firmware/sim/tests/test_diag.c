@@ -188,7 +188,7 @@ static void test_lv_cutoff_suppressed_channel_never_faulted(void)
 
 static void test_flash_turn_off_phase_never_faulted(void)
 {
-    /* Cross-module correctness point: a MC_OUT_MODE_FLASH_TURN
+    /* Cross-module correctness point: a MC_OUT_BEHAVIOUR_BLINK
      * channel's off-phase must read as "not actually energized" to
      * mc_diag, exactly like the lv_cutoff-suppressed case above --
      * otherwise every other blink cycle would misclassify as an open-load
@@ -705,8 +705,8 @@ static void test_wire_status_reports_lv_cutoff_active(void)
 {
     diag_session_fixture_t fx;
     dsfx_init(&fx);
-    /* Channel 9 keeps mc_config_default()'s MC_OUT_FUNC_NONE, which is
-     * non-essential (mc_output_function_is_essential()). */
+    /* Channel 9 keeps mc_config_default()'s cleared role flags, which make
+     * it non-essential (mc_output_channel_is_essential()). */
     assert(mc_output_set(&fx.output, 9, true, MC_OUT_SRC_LOCAL) == MC_OUT_OK);
     mc_output_set_lv_cutoff(&fx.output, true);
 

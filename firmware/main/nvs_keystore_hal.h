@@ -4,8 +4,8 @@
 #include "mc_keystore.h"
 
 /* Persists the enrolled-key store in its own NVS namespace, separate from
- * the config blob (AGENTS.md #4 / mc_keystore.h: keys are never part of the
- * exportable config). Call after nvs_flash_init(). */
+ * the config blob (mc_keystore.h: keys are never part of the exportable
+ * config). Call after nvs_flash_init(). */
 esp_err_t nvs_keystore_hal_init(void);
 
 /* Loads the keystore. If nothing is stored yet, fills `out` with an empty

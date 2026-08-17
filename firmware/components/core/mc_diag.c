@@ -84,7 +84,7 @@ void mc_diag_tick(mc_diag_t *diag, mc_output_engine_t *output, uint32_t now_ms)
     /* The low-voltage/engine-running hysteresis below is value-based (a gap
      * between engage/disengage thresholds), not time-based. now_ms is used
      * for mc_output_get_actual_state()'s blink-phase-accurate check:
-     * a MC_OUT_MODE_FLASH_TURN channel's off-phase must read as
+     * a MC_OUT_BEHAVIOUR_BLINK channel's off-phase must read as
      * "not energized" here, or its every-other-tick dark half would get
      * misclassified as an open-load fault. */
 
@@ -144,7 +144,7 @@ void mc_diag_tick(mc_diag_t *diag, mc_output_engine_t *output, uint32_t now_ms)
     if (engine_running) {
         /* Charging: the alternator/regulator is holding voltage up, so a
          * stale low reading from just before the engine started must never
-         * linger into a cutoff (AGENTS.md #1: never drop essential outputs
+         * linger into a cutoff (ride-safe failure: never drop essential outputs
          * mid-ride, and don't even flirt with non-essential ones either). */
         cutoff = false;
     } else if (!cutoff) {

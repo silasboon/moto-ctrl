@@ -24,12 +24,12 @@ CONFIG_BT_CONTROLLER_ONLY=n
 CONFIG_BT_BLUEDROID_ENABLED=n
 
 # LE Secure Connections + bonding, with bonds persisted to NVS so pairings
-# survive reboots (AGENTS.md #4). ble_store_config_init() requires this.
+# survive reboots (phone-as-key auth). ble_store_config_init() requires this.
 CONFIG_BT_NIMBLE_NVS_PERSIST=y
 CONFIG_BT_NIMBLE_SM_LEGACY=y
 CONFIG_BT_NIMBLE_SM_SC=y
 
-# --- App rollback support (OTA, phase 8) ---
+# --- App rollback support (OTA) ---
 CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y
 
 # CONFIG_BT_NIMBLE_HS_PVCY intentionally left at its Kconfig default (y).
@@ -48,7 +48,8 @@ CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y
 # checked on context switch, and an ISR taking a frame below an already
 # blown SP never touches it. The watchpoint traps the overflowing write
 # itself, at the instruction that does it. Keep this on: a stack overflow
-# must fail loudly at its source, not corrupt an unrelated task (AGENTS.md #1).
+# must fail loudly at its source, not corrupt an unrelated task (ride-safe
+# failure).
 CONFIG_FREERTOS_WATCHPOINT_END_OF_STACK=y
 # Headroom for app_main()'s NVS/flash init chain now that the multi-KB
 # buffers are off the stack.

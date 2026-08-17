@@ -109,7 +109,7 @@ describe('OutputsScreen', () => {
 
   /* Ignition and brake are essential whether or not the flag is ticked, so the
    * switch shows on and is locked — presenting it as togglable would imply you
-   * can shed your ignition, which AGENTS.md #1 forbids. */
+   * can shed your ignition, which ride-safe failure forbids. */
   test('essential is forced on and locked for ignition and brake channels', async () => {
     const cfg = defaultConfig();
     cfg.outputs.channels[0]!.is_ignition = true;

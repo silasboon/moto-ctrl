@@ -4,12 +4,11 @@
  * mc_crypto — thin portable wrapper over the vendored TweetNaCl Ed25519
  * implementation, plus a platform CSPRNG.
  *
- * Phone-as-key model (AGENTS.md safety requirement #4): the phone holds a
- * private key in its secure keystore and signs; the device stores only
- * public keys and verifies. So on the firmware the *verify* path
- * (mc_crypto_verify) and the RNG (for nonces) are what matter; sign and
- * keypair exist for host tests that stand in for the phone, and are not
- * called by firmware.
+ * Phone-as-key model: the phone holds a private key in its secure keystore
+ * and signs; the device stores only public keys and verifies. So on the
+ * firmware the *verify* path (mc_crypto_verify) and the RNG (for nonces) are
+ * what matter; sign and keypair exist for host tests that stand in for the
+ * phone, and are not called by firmware.
  *
  * Signatures are detached (64-byte signature separate from the message),
  * matching tweetnacl-js's `nacl.sign.detached` on the phone side.
@@ -44,11 +43,10 @@ bool mc_crypto_verify(const uint8_t pubkey[MC_CRYPTO_PUBKEY_BYTES],
 
 /* SHA-512 of msg[0..msg_len). Used by mc_lock to store a salted
  * hash of the button cheat-code rather than the plaintext sequence — see
- * AGENTS.md safety requirement #4's "device never stores anything that
- * could unlock it if the flash is dumped" doctrine, applied here to the
- * cheat-code as well as to enrolled keys. Not secret-dependent timing is
- * not a concern here (unlike mc_crypto_verify): this is a general-purpose
- * hash, not a MAC. */
+ * the "device never stores anything that could unlock it if the flash is
+ * dumped" doctrine, applied to the cheat-code as well as to enrolled keys.
+ * Secret-dependent timing is not a concern here (unlike mc_crypto_verify):
+ * this is a general-purpose hash, not a MAC. */
 bool mc_crypto_hash_sha512(const uint8_t *msg, size_t msg_len, uint8_t out[MC_CRYPTO_HASH_BYTES]);
 
 /* Incremental SHA-512, for hashing data too large to buffer in one call —

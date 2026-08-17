@@ -1,10 +1,10 @@
 # Hardware bench validation checklist
 
-**Status: unexecuted.** No MOTO-CTRL board has been built yet (every other
-doc in this repo says the same thing) — this checklist exists so that
-whoever brings up the first board, and every release after that, has a
-concrete procedure instead of re-deriving one. Check items off as you go;
-keep a copy per revision/release (see the sign-off section at the bottom).
+**Status: worked through on v1 hardware.** This is a per-release procedure,
+not a one-time bring-up: run it again for every hardware revision and every
+firmware release, since it is the only layer that covers real GPIO, real
+current sensing, and real BLE. Check items off as you go; keep a copy per
+revision/release (see the sign-off section at the bottom).
 
 ## Relationship to the software test pyramid
 
@@ -15,21 +15,20 @@ QEMU boot validation of the real cross-compiled binary. Read that doc's
 own caveats before assuming this checklist is redundant with any of it:
 
 - QEMU **cannot** validate BLE (no radio controller emulation) — pairing,
-  bonding, auth, and anything over the air is bench-only, first proven
-  here.
+  bonding, auth, and anything over the air is bench-only.
 - The simulator's `engine_running`/battery/current values are injected
-  directly over a debug channel — real ADC readings, real PROFET current
-  sense, and real voltage dividers have never been exercised by any
-  automated test. Calibration (`DIAG_SET_CALIB`) is meaningless until it's
-  been done against this board's actual analog front end.
-- Timing (watchdog restore budget, debounce, BLE reconnect) has only ever
-  been measured against synthetic/simulated time or a desktop OS's
-  wall clock — never the real MCU's timers under real load.
+  directly over a debug channel, so no automated test exercises real ADC
+  readings, real PROFET current sense, or the real voltage dividers.
+  Calibration (`DIAG_SET_CALIB`) is meaningless until it has been done
+  against a given board's actual analog front end.
+- Timing (watchdog restore budget, debounce, BLE reconnect) is only ever
+  measured by the automated layers against synthetic time or a desktop
+  OS's wall clock, never the real MCU's timers under real load.
 
-This checklist is where all of that gets proven for the first time. Don't
-read a clean bench run as re-validating logic already covered by
-`docs/TESTING.md` — it isn't; it's validating that the logic still holds
-once real silicon, real analog signals, and real radio are involved.
+This checklist is where all of that gets proven. Don't read a clean bench
+run as re-validating logic already covered by `docs/TESTING.md` — it isn't;
+it's validating that the logic still holds once real silicon, real analog
+signals, and real radio are involved.
 
 ## Before you start
 
@@ -84,8 +83,7 @@ For each of OUT1–OUT12:
       `isGain`/`isOffsetMv`/`kilis`/`vbatGain`/`vbatOffsetMv` values for
       this specific board (`hardware/PINOUT.md`'s battery divider and
       current-sense notes both call out "calibrate per board" — this is
-      that step, and it has never been done against real hardware before
-      now).
+      that step, and it has to be redone for each individual board).
 - [ ] Disconnect a loaded channel's bulb (open-load) and confirm a fault
       is reported within a reasonable time; re-connect and confirm it
       clears.
@@ -103,9 +101,9 @@ Using a bench PSU in place of the battery:
       the cutoff — non-essential outputs are suppressed, `lvCutoffActive`
       reports true.
 - [ ] Sweeping back up past cutoff + hysteresis clears it.
-- [ ] Confirm essential outputs (however you've assigned `ignition`, per
-      your Pin Mapper config) are **never** suppressed by the cutoff,
-      even at the lowest voltage tested.
+- [ ] Confirm essential outputs (whichever channels you've ticked
+      `essential`, plus the `is_ignition`/`is_brake` ones) are **never**
+      suppressed by the cutoff, even at the lowest voltage tested.
 - [ ] Raising voltage into the configured `engine_run_mv` threshold (charging
       voltage) makes `engine_running` become true (visible via the
       diagnostics config / starter-inhibited behavior in §6).
@@ -142,7 +140,7 @@ For each of BTN1–BTN8 (mind CN2's reversed pin order, `hardware/PINOUT.md`):
 
 ## 7. BLE pairing, bonding, auth
 
-Real radio, first time — QEMU cannot validate any of this:
+Real radio — QEMU cannot validate any of this:
 
 - [ ] Board advertises as `MOTO-CTRL` and is discoverable from the app.
 - [ ] First-time pairing (trust-on-first-use enrollment) succeeds and the

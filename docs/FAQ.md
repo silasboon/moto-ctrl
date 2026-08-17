@@ -77,11 +77,13 @@ with the phone fully offline.
 
 ## What happens if my phone dies, I forget it, or BLE just isn't working?
 
-The button cheat-code on the handlebar is always available as a fallback
-the moment the immobilizer is enabled — it's never disabled just because
-phone-as-key is turned on (layered unlock: you can't lock yourself out).
-You can also enable an optional traditional ignition-switch input mode if
-you want a third method.
+You always have a non-phone way in. Before the immobilizer can be enabled
+at all, you must configure at least one method that isn't the phone —
+either the handlebar button cheat-code or a traditional ignition-switch
+input wired to one of the inputs. Whichever you set stays available the
+whole time; it is never disabled just because phone-as-key is also turned
+on (layered unlock: you can't lock yourself out). Configure both if you
+want two non-phone fallbacks.
 
 ## What if my phone is lost or stolen?
 

@@ -3,8 +3,7 @@
 /*
  * board_config — the ONE place GPIO numbers are allowed to appear in
  * firmware. Generated from hardware/PINOUT.md (board "Integrated V2",
- * schematic 2026-07-18). See AGENTS.md ("Pin definitions: single source
- * of truth"). If PINOUT.md changes for a new hardware revision,
+ * schematic 2026-07-18). If PINOUT.md changes for a new hardware revision,
  * regenerate this header from it — do not hand-edit pins in both places.
  *
  * Channels are 0-indexed here (channel 0 == OUT1 .. channel 11 == OUT12),

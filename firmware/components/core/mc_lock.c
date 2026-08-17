@@ -209,7 +209,7 @@ void mc_lock_init(mc_lock_t *lock, const mc_lock_config_t *config, bool persiste
         lock->locked_flag = false;
         mc_output_set_immobilized(output, false);
         if (ride_safe_override) {
-            /* AGENTS.md #1: a brownout mid-ride must restore the bike as
+            /* ride-safe failure: a brownout mid-ride must restore the bike as
              * running, never immobilized. Persist the corrected state so a
              * follow-up reboot (with the engine genuinely off) doesn't
              * re-fight this decision. */
@@ -247,7 +247,7 @@ void mc_lock_tick(mc_lock_t *lock, mc_output_engine_t *output, uint32_t now_ms,
      * start — otherwise the switch could unlock the bike but never lock it
      * again (this is what the edge fires on, off->on or on->off).
      *
-     * Deliberately an edge, not a level: AGENTS.md #3's methods compose as
+     * Deliberately an edge, not a level: layered unlock's methods compose as
      * OR, never AND. A rider with both phone-as-key and an ignition switch
      * configured who unlocks from the phone while the switch is sitting off
      * must get ignition — a level check here would immediately fight that

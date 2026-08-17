@@ -72,7 +72,7 @@ typedef enum {
 
 /* Method bits for MC_OP_LOCK_(GET|SET)_CONFIG's methods_mask. The button
  * cheat-code is not a bit here — it is always active whenever
- * immobilizer_enabled is set (AGENTS.md #3: always-available fallback). */
+ * immobilizer_enabled is set (layered unlock: always-available fallback). */
 #define MC_LOCK_METHOD_PHONE (1u << 0)
 #define MC_LOCK_METHOD_IGNITION_SWITCH (1u << 1)
 
@@ -136,7 +136,7 @@ typedef enum {
  *
  * Deliberately opt-in and per-session, never on by default: the board must
  * not notify on every handlebar press for the whole of a ride (radio +
- * battery discipline, AGENTS.md #7). State lives in the session, so it dies
+ * battery discipline, battery protection). State lives in the session, so it dies
  * with the BLE link and needs no timeout — a disconnect always ends it. */
 #define MC_OP_INPUT_LEARN 0x12      /* client->device: [enable:1] */
 /* device->client, unsolicited while learn mode is on:

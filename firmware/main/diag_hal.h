@@ -9,11 +9,10 @@
  * pullup, per PINOUT.md's warning and board_config_early_init()'s own) and
  * before the app task starts ticking mc_diag.
  *
- * NOT compiled or run in this development environment — there is no local
- * ESP-IDF toolchain, so this file (unlike firmware/components/core/mc_diag.c,
- * which the host simulator does compile and test) has only been reviewed by
- * hand — treat it as unverified until it's been built and bench-tested on
- * real hardware. */
+ * No host test covers this file: unlike firmware/components/core/mc_diag.c,
+ * which the simulator compiles and tests, the DSEL/DEN mux sequencing and
+ * ADC reads here can only be exercised on a real board. Re-check it on
+ * hardware after changes — see docs/HARDWARE_TESTING.md. */
 void diag_hal_init(void);
 
 mc_diag_hal_t diag_hal_get(void);

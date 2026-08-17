@@ -48,7 +48,7 @@ typedef enum {
  * channel's configured thresholds to trigger a real fault. */
 #define SIM_OP_SET_CHANNEL_FAULT 0x02
 /* [running:1] -- mc_diag derives engine_running for real from
- * injected battery voltage every tick (AGENTS.md #6); this op no longer
+ * injected battery voltage every tick (starter protection); this op no longer
  * sets the flag directly (it would just be overwritten by the very next
  * tick). Instead it nudges the injected battery voltage to a value that
  * makes the real derivation land on the requested state, so the op stays

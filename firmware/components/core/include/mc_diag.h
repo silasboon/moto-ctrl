@@ -2,11 +2,11 @@
 
 /*
  * mc_diag — current-sense diagnostics (IS mux driver, current
- * calibration, faults, blown-bulb detection), plus the two AGENTS.md
- * safety signals that ride the same two analog lines:
- *   - #6 starter protection's engine_running signal (voltage-based
- *     charging detection).
- *   - #7 battery protection's low-voltage cutoff (disables non-essential
+ * calibration, faults, blown-bulb detection), plus the two safety signals
+ * that ride the same two analog lines:
+ *   - Starter protection's engine_running signal (voltage-based charging
+ *     detection).
+ *   - Battery protection's low-voltage cutoff (disables non-essential
  *     outputs below a configurable threshold; never the unlock path).
  *
  * Both shared analog lines are described in hardware/PINOUT.md's
@@ -19,8 +19,8 @@
  *   - VSENSE_BAT (battery divider ADC line).
  *
  * Open-load/overcurrent thresholds are per-channel, configurable, and
- * learnable (AGENTS.md: "do not hardcode incandescent-bulb current
- * assumptions") — mc_diag_learn() sets a threshold from a real measured
+ * learnable rather than hardcoded to incandescent-bulb current
+ * assumptions — mc_diag_learn() sets a threshold from a real measured
  * reading rather than a guessed constant.
  *
  * Like every other core module: time is injected, no ESP-IDF/FreeRTOS
@@ -48,12 +48,12 @@ typedef enum {
 } mc_diag_fault_t;
 
 /* Defaults used by mc_diag_config_default(). Deliberately generic
- * placeholders, not a guess at any particular bulb — AGENTS.md requires
- * these be learnable per channel (mc_diag_learn()), not hardcoded to an
- * assumed load. */
+ * placeholders, not a guess at any particular bulb — these are learnable
+ * per channel via mc_diag_learn(), never hardcoded to an assumed load. */
 #define MC_DIAG_DEFAULT_OPEN_LOAD_MA 50u
 #define MC_DIAG_DEFAULT_OVERCURRENT_MA 15000u
-/* AGENTS.md #7: "Low-voltage cutoff (configurable, default 11.8V for LiFePO4)". */
+/* Battery protection: low-voltage cutoff, configurable, 11.8V default
+ * for LiFePO4. */
 #define MC_DIAG_DEFAULT_LV_CUTOFF_MV 11800u
 #define MC_DIAG_DEFAULT_LV_CUTOFF_HYSTERESIS_MV 300u
 /* Deliberately well above a fully-charged LiFePO4 pack's resting voltage
@@ -82,13 +82,13 @@ typedef struct {
     mc_diag_channel_config_t channels[MC_OUTPUT_COUNT];
 
     /* Below this (and only while !engine_running — see mc_diag_tick),
-     * mc_diag_tick() engages the low-voltage cutoff (AGENTS.md #7).
+     * mc_diag_tick() engages the low-voltage cutoff (battery protection).
      * Recovers once battery_mv >= lv_cutoff_mv + lv_cutoff_hysteresis_mv. */
     uint16_t lv_cutoff_mv;
     uint16_t lv_cutoff_hysteresis_mv;
 
     /* Above this, mc_diag_tick() considers the alternator/charging system
-     * live and sets engine_running (AGENTS.md #6). Clears it once
+     * live and sets engine_running (starter protection). Clears it once
      * battery_mv < engine_run_mv - engine_run_hysteresis_mv. */
     uint16_t engine_run_mv;
     uint16_t engine_run_hysteresis_mv;

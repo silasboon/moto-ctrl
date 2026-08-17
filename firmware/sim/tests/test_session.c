@@ -648,11 +648,11 @@ static void test_config_read_write_roundtrip_preserves_output_state(void)
 static void test_config_write_preserves_imported_mode_not_just_on_off(void)
 {
     /* Regression coverage: config_commit() must not force every channel's
-     * `mode` to mirror the live on/off state, which would silently discard
-     * an imported MC_OUT_MODE_FLASH_TURN/PWM/etc. choice on every single
-     * commit. mode must come through from the imported JSON as-is -- only
-     * commanded_on is preserved from live state (AGENTS.md #1: import must
-     * never toggle outputs). */
+     * `behaviour` to mirror the live on/off state, which would silently
+     * discard an imported BLINK/FLASHER/dimming choice on every commit.
+     * `behaviour` must come through from the imported JSON as-is -- only
+     * commanded_on is preserved from live state (ride-safe failure: import
+     * must never toggle outputs). */
     fixture_t fx;
     fixture_init(&fx);
     fx.config.outputs.channels[0].indicator = MC_INDICATOR_LEFT; fx.config.outputs.channels[0].hazard_member = true;
@@ -1114,7 +1114,7 @@ static void test_input_learn_toggles_and_defaults_off(void)
     enroll_and_auth(&s, &fx, &rec, sk);
 
     /* Off until explicitly asked for — the board must not stream input
-     * events for a whole ride by default (AGENTS.md #7). */
+     * events for a whole ride by default (battery protection). */
     assert(s.input_learn == false);
 
     rec_reset(&rec);

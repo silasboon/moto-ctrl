@@ -3,36 +3,35 @@
 /*
  * mc_output — the 12-channel output engine.
  *
- * Channel function assignment + friendly names, on/off switching, PWM
- * dimming, and flasher patterns (turn, hazard, brake flasher) all live
- * directly in this module — one module (mc_output_engine_t/mc_output.c)
- * rather than several sibling ones, so the mode field can extend this
- * struct rather than reshaping it as behavior grows.
+ * Channel roles + friendly names, on/off switching, PWM dimming, and
+ * flasher patterns (turn, hazard, brake flasher) all live directly in this
+ * module (mc_output_engine_t/mc_output.c) rather than in several sibling
+ * ones, so new behaviour extends this struct rather than reshaping it.
  *
  * Four safety invariants are enforced here, in the one layer every future
  * caller (hardware buttons now, BLE control later) has to go through:
  *
- *   - Starter protection (AGENTS.md #6): starter output can only be
+ *   - Starter protection: the starter output can only be
  *     commanded from MC_OUT_SRC_LOCAL (hardware button path), never
  *     MC_OUT_SRC_REMOTE (app/BLE); it's rejected outright
  *     while `engine_running` is set, and rejected unless a configured
  *     neutral/clutch interlock reports engaged.
- *   - Ride-safe failure (AGENTS.md #1): this module never spontaneously
+ *   - Ride-safe failure: this module never spontaneously
  *     changes output state on its own — every transition is either an
  *     explicit mc_output_set() call, mc_output_hazard_press(), a turn
  *     auto-cancel expiry (mc_output_tick(), itself only ever turning a
  *     non-essential channel OFF), or mc_output_restore_from_config() at
  *     boot restoring exactly what was last commanded.
- *   - Immobilizer enforcement (AGENTS.md #2): while `immobilized`
- *     is set, turning ON the ignition or starter function is refused from
+ *   - Immobilizer enforcement: while `immobilized`
+ *     is set, turning ON the ignition or starter channel is refused from
  *     ANY source. mc_lock is the only caller of
  *     mc_output_set_immobilized() — this module doesn't know about lock
  *     states, only about the one flag it must obey, so a future caller
  *     can't bypass the immobilizer by going around mc_lock.
- *   - Low-voltage cutoff (AGENTS.md #7): while `lv_cutoff` is set,
- *     every non-essential channel (see mc_output_function_is_essential())
+ *   - Low-voltage cutoff: while `lv_cutoff` is set,
+ *     every non-essential channel (see mc_output_channel_is_essential())
  *     is suppressed at the hardware regardless of commanded_on — but
- *     commanded_on/mode are left untouched, so recovery
+ *     commanded_on/behaviour are left untouched, so recovery
  *     (mc_output_set_lv_cutoff(eng, false)) auto-restores every channel to
  *     its last-commanded state with no separate "unsuppress" call needed
  *     anywhere else. Unlike `immobilized` (blocks turning ON), this
@@ -50,16 +49,15 @@
 
 #include "mc_types.h"
 
-/* What a channel DOES when its trigger fires. Replaces the old
- * mc_output_function_t/mc_output_mode_t pair (schema_version 6).
+/* What a channel DOES when its trigger fires.
  *
- * The function taxonomy (headlight_hi/lo, horn, aux, ...) is gone: a rider
- * names a channel whatever they like, and the only things firmware still
- * needs to know about a channel are the explicit role flags below — the ones
- * that actually carry safety logic. Everything else was a label.
+ * There is no function taxonomy (headlight_hi/lo, horn, aux, ...): a rider
+ * names a channel whatever they like, and the only things firmware needs to
+ * know about it are the explicit role flags below — the ones that actually
+ * carry safety logic. Everything else would be just a label.
  *
- * PWM dimming is no longer a behaviour but a modifier: pwm_duty_pct < 100
- * dims a channel whenever it is driven on, so it composes with TOGGLE and
+ * PWM dimming is a modifier rather than a behaviour: pwm_duty_pct < 100 dims
+ * a channel whenever it is driven on, so it composes with TOGGLE and
  * MOMENTARY instead of excluding them. */
 typedef enum {
     /* Latching on/off. The default. */
@@ -69,20 +67,20 @@ typedef enum {
     MC_OUT_BEHAVIOUR_MOMENTARY,
     /* Blinks at config.turn_flash_period_ms while commanded on — indicators,
      * hazards, and anything the rider wants to blink alongside them. Full
-     * on/off switching only, never partial duty (AGENTS.md's PWM/flasher
-     * rule), so every lamp type works with no hyperflash workarounds. */
+     * on/off switching only, never partial duty (the PWM/flasher rule), so
+     * every lamp type works with no hyperflash workarounds. */
     MC_OUT_BEHAVIOUR_BLINK,
     /* A short attention-pulse burst (config.brake_flash_pulse_*) on the
      * off->on transition, then solid while commanded on stays true; off is
-     * always immediate, never mid-pattern. Opt-in per AGENTS.md #5: brake
-     * flash patterns are "not legal in all jurisdictions, default OFF." */
+     * always immediate, never mid-pattern. Opt-in, because brake flash
+     * patterns are not legal in every jurisdiction. */
     MC_OUT_BEHAVIOUR_FLASHER,
     MC_OUT_BEHAVIOUR_COUNT,
 } mc_output_behaviour_t;
 
-/* Which side an indicator is on, or none. This is the one piece of the old
- * function enum that had to survive: turn mutual exclusion and the
- * auto-cancel timer both need to know left from right. A channel that merely
+/* Which side an indicator is on, or none. Left/right is the one distinction
+ * firmware genuinely needs: turn mutual exclusion and the auto-cancel timer
+ * both depend on it. A channel that merely
  * blinks along with the hazards (a DRL, say) is NOT an indicator — it sets
  * hazard_member instead, so it never participates in mutual exclusion or
  * auto-cancel. */
@@ -93,7 +91,7 @@ typedef enum {
 } mc_indicator_side_t;
 
 /* Who is asking for a state change. Only MC_OUT_SRC_LOCAL may command the
- * starter output — see AGENTS.md safety requirement #6. */
+ * starter output — see starter protection. */
 typedef enum {
     MC_OUT_SRC_LOCAL = 0,  /* hardware button path */
     MC_OUT_SRC_REMOTE,     /* app/BLE control */
@@ -109,14 +107,14 @@ typedef enum {
 } mc_output_result_t;
 
 /* Config validation problems, returned as a bitmask from
- * mc_output_config_validate(). A caller (app pin mapper, or firmware
+ * mc_output_config_validate(). A caller (the app's Outputs screen, or firmware
  * applying an imported config) should refuse to apply a config with any
  * bit set. */
 typedef enum {
     MC_OUT_CFG_OK = 0,
     MC_OUT_CFG_MULTIPLE_IGNITION = 1u << 0,
     MC_OUT_CFG_MULTIPLE_STARTER = 1u << 1,
-    /* Some channel's mode is MC_OUT_MODE_PWM with pwm_duty_pct outside 1-100. */
+    /* Some channel has pwm_duty_pct outside 1-100. */
     MC_OUT_CFG_BAD_PWM_DUTY = 1u << 2,
     /* turn_flash_period_ms == 0 — it's a divisor in the blink-phase calc. */
     MC_OUT_CFG_BAD_TURN_PERIOD = 1u << 3,
@@ -143,34 +141,33 @@ typedef struct {
     mc_output_behaviour_t behaviour;
     bool commanded_on;         /* desired/persisted state */
     /* 1-100. Below 100 the channel is dimmed whenever it is driven on,
-     * composing with any behaviour. Opt-in per AGENTS.md's PWM/flasher rule
+     * composing with any behaviour. Opt-in per the PWM/flasher rule
      * (driver-based LED lamps can misbehave under PWM), and never applied to
      * BLINK/FLASHER patterns, which are always full on/off. */
     uint8_t pwm_duty_pct;
 
     /* --- Role flags. These, and only these, carry safety logic. ---
      *
-     * They replaced the old function enum precisely because the enum forced
-     * a rider to mislabel a channel to get the behaviour they needed, and
-     * because "essential" was silently inferred from the headlight tags —
-     * so naming a channel anything else quietly made it sheddable. */
+     * Each is set explicitly, never inferred from a channel's name. Inferring
+     * "essential" from a headlight label would mean naming a channel anything
+     * else quietly made it sheddable by the low-voltage cutoff. */
 
-    /* AGENTS.md #1: never dropped by the low-voltage cutoff. Set this on
+    /* Ride-safe failure: never dropped by the low-voltage cutoff. Set this on
      * anything that must not go dark or dead mid-ride — headlight, ignition,
      * brake light, fuel pump. Explicit rather than inferred: dropping the
-     * headlight function tag would otherwise have made headlights
-     * sheddable, which #1 forbids. */
+     * headlight role would otherwise have made headlights sheddable,
+     * which ride-safe failure forbids. */
     bool essential;
-    /* AGENTS.md #2: the immobilizer's target. mc_lock reads this channel to
-     * decide whether the bike is "running", and mc_output_set() refuses to
+    /* The immobilizer's target. mc_lock reads this channel to decide
+     * whether the bike is "running", and mc_output_set() refuses to
      * energize it while immobilized. At most one (validated). */
     bool is_ignition;
-    /* AGENTS.md #6: never commandable from the app, inhibited while the
+    /* Starter protection: never commandable from the app, inhibited while the
      * engine is running (and force-dropped the moment it starts), and gated
      * behind the neutral/clutch interlock when one is assigned. At most one
      * (validated). */
     bool is_starter;
-    /* AGENTS.md #5: the brake light. Target of the brake-switch
+    /* Brake-light priority: the brake light. Target of the brake-switch
      * pass-through, and the channel a FLASHER behaviour is meant for. */
     bool is_brake;
     /* Turn mutual exclusion + auto-cancel apply only to these. */
@@ -198,7 +195,7 @@ typedef struct {
      * solves. Restoring persisted state at boot is not an edge and
      * deliberately does not fire either path, keeping
      * mc_output_restore_from_config() a faithful replay of what was last
-     * commanded (AGENTS.md #1). */
+     * commanded (ride-safe failure). */
     bool on_with_ignition;
 
     /* Channel this one alternates with — hi/lo beam, two DRL colours — or
@@ -222,7 +219,7 @@ typedef struct {
     mc_output_channel_config_t channels[MC_OUTPUT_COUNT];
     /* Input index (0..MC_INPUT_COUNT-1) assigned as the starter's
      * neutral/clutch interlock, or -1 if none is assigned (optional per
-     * AGENTS.md #6). Interpreting the input itself is
+     * starter protection). Interpreting the input itself is
      * mc_input's job; this engine only consumes the resulting engaged/
      * disengaged flag via mc_output_set_interlock_engaged(). */
     int8_t starter_interlock_input;
@@ -231,19 +228,19 @@ typedef struct {
      * level via mc_input_button_level() — mirrors starter_interlock_input.
      * The caller (firmware/main's app_task, firmware/sim's ticker) polls
      * this level each tick and calls mc_output_set() on the BRAKE-function
-     * channel found via mc_output_find_channel_by_function() whenever it
+     * channel found via mc_output_find_brake_channel() whenever it
      * changes; there is no dedicated "set brake input" API here, since a
      * brake-switch transition is just an ordinary commanded_on transition
      * like any other — the attention-burst pattern is purely a property of
-     * that channel's mode (MC_OUT_MODE_FLASH_BRAKE). */
+     * that channel's behaviour (MC_OUT_BEHAVIOUR_FLASHER). */
     int8_t brake_switch_input;
     /* Turn-signal auto-cancel timer: 0 = never auto-cancels
-     * (manual toggle only). See mc_output_set()'s TURN_L/TURN_R handling. */
+     * (manual toggle only). See mc_output_set()'s indicator handling. */
     uint32_t turn_auto_cancel_ms;
-    /* Full on+off blink cycle period for MC_OUT_MODE_FLASH_TURN, ms. Must
+    /* Full on+off blink cycle period for MC_OUT_BEHAVIOUR_BLINK, ms. Must
      * be nonzero — mc_output_config_validate() enforces this. */
     uint16_t turn_flash_period_ms;
-    /* Brake-flasher attention-pulse burst (MC_OUT_MODE_FLASH_BRAKE),
+    /* Brake-flasher attention-pulse burst (MC_OUT_BEHAVIOUR_FLASHER),
      * played once on the off->on transition before settling solid.
      * pulse_count == 0 means no visible pulses (goes solid immediately). */
     uint8_t brake_flash_pulse_count;
@@ -258,9 +255,9 @@ typedef struct {
     void (*set)(uint8_t channel, bool on, void *ctx);
     /* Optional (NULL if the HAL has no PWM support): drive
      * channel at a steady duty_pct (1-100). Called instead of set() only
-     * when the channel's mode is MC_OUT_MODE_PWM and it's actually driven
-     * on — flasher patterns never use this (AGENTS.md's PWM/flasher rule:
-     * flashers are always full on/off). If NULL, a PWM-mode channel just
+     * when the channel's pwm_duty_pct is below 100 and it's actually driven
+     * on — flasher patterns never use this (the PWM/flasher rule: flashers
+     * are always full on/off). If NULL, a PWM-mode channel just
      * falls back to plain on/off via set(). */
     void (*set_duty)(uint8_t channel, uint8_t duty_pct, void *ctx);
     void *ctx;
@@ -275,10 +272,11 @@ typedef struct {
     bool lv_cutoff;               /* set by mc_diag below the low-voltage threshold */
 
     /* Flasher/PWM runtime state. */
-    uint32_t last_tick_ms;       /* updated by mc_output_tick(); used by mc_output_set()/
-                                   * mc_output_hazard_press() to timestamp state that's
-                                   * armed outside a tick call — at most one tick (~10ms)
-                                   * stale, fine for second-scale timers and blink phase. */
+    /* Updated by mc_output_tick(); used by mc_output_set() /
+     * mc_output_hazard_press() to timestamp state armed outside a tick
+     * call — at most one tick (~10ms) stale, which is fine for
+     * second-scale timers and blink phase. */
+    uint32_t last_tick_ms;
     uint32_t turn_auto_cancel_deadline_ms[MC_OUTPUT_COUNT]; /* 0 = none pending */
     uint32_t brake_burst_started_ms[MC_OUTPUT_COUNT];       /* stamped on a FLASHER channel's off->on edge */
     /* True while mc_output_hazard_press() has the group switched on. Makes
@@ -304,15 +302,15 @@ typedef struct {
 void mc_output_init(mc_output_engine_t *eng, const mc_output_config_t *config, mc_output_hal_t hal);
 
 /* Applies every channel's persisted commanded_on state to the hal. Call
- * this as early as possible in boot — see AGENTS.md safety requirement #1
- * (<250ms restore after reboot). */
+ * this as early as possible in boot — ride-safe failure requires a <250ms
+ * restore after reboot. */
 void mc_output_restore_from_config(mc_output_engine_t *eng);
 
-/* For a TURN_L/TURN_R-function channel, turning on also forces the
- * opposite side off (mutual exclusion) and arms the configured auto-cancel
- * timer (turn_auto_cancel_ms == 0 disables it); turning off clears that
- * channel's pending timer. Every other function is unaffected — plain
- * on/off. */
+/* For a channel whose `indicator` is LEFT or RIGHT, turning on also forces
+ * the opposite side off (mutual exclusion) and arms the configured
+ * auto-cancel timer (turn_auto_cancel_ms == 0 disables it); turning off
+ * clears that channel's pending timer. Every other channel is unaffected —
+ * plain on/off. */
 mc_output_result_t mc_output_set(mc_output_engine_t *eng, uint8_t channel, bool on, mc_output_source_t source);
 
 bool mc_output_get_state(const mc_output_engine_t *eng, uint8_t channel);
@@ -324,18 +322,17 @@ bool mc_output_get_state(const mc_output_engine_t *eng, uint8_t channel);
  * persisted "intent". Use this (not mc_output_get_state()) anywhere that
  * needs to know whether a channel is really energized this instant, e.g.
  * mc_diag deciding which channels are meaningful to current-sense this
- * tick — critical for a MC_OUT_MODE_FLASH_TURN channel, whose off-phase
+ * tick — critical for a MC_OUT_BEHAVIOUR_BLINK channel, whose off-phase
  * must read as "not energized" rather than a spurious open-load fault. */
 bool mc_output_get_actual_state(const mc_output_engine_t *eng, uint8_t channel, uint32_t now_ms);
 
-/* Toggles hazards: if either TURN_L or TURN_R is currently off, turns both
+/* Toggles hazards: if either indicator side is currently off, turns both
  * on together (bypassing the mutual-exclusion rule mc_output_set() applies
  * to a single side); if both are already on, turns both off. No auto-cancel
  * timer is armed either way — hazards stay on until pressed again, same as
  * a real hazard switch (and, like any non-essential channel, still subject
  * to the low-voltage cutoff — an acceptable fallback rather than draining
- * the battery flat). No-op if neither a TURN_L nor a TURN_R channel is
- * configured. */
+ * the battery flat). No-op if no indicator channel is configured. */
 void mc_output_hazard_press(mc_output_engine_t *eng, uint32_t now_ms);
 
 /* Whether hazards are currently running. Reported on the status wire (byte
@@ -365,7 +362,7 @@ mc_output_result_t mc_output_alternate_press(mc_output_engine_t *eng, uint8_t ch
  * tick already see the current blink phase). Updates the engine's notion
  * of "now", expires any turn channel whose auto-cancel deadline has
  * passed, and re-applies every channel's driven state — this is what
- * actually advances MC_OUT_MODE_FLASH_TURN/FLASH_BRAKE's timing between
+ * actually advances the BLINK/FLASHER pattern timing between
  * commanded-on transitions. */
 void mc_output_tick(mc_output_engine_t *eng, uint32_t now_ms);
 
@@ -395,7 +392,7 @@ void mc_output_set_interlock_engaged(mc_output_engine_t *eng, bool engaged);
 
 /* mc_lock calls this on entering/leaving LOCKED. While true,
  * mc_output_set() refuses to turn the ignition or starter function ON from
- * any source (AGENTS.md #2). Never blocks turning OFF. */
+ * any source. Never blocks turning OFF. */
 void mc_output_set_immobilized(mc_output_engine_t *eng, bool immobilized);
 
 /* mc_diag calls this when battery voltage crosses the configured
@@ -404,13 +401,13 @@ void mc_output_set_immobilized(mc_output_engine_t *eng, bool immobilized);
  * what this suppresses. */
 void mc_output_set_lv_cutoff(mc_output_engine_t *eng, bool cutoff_active);
 
-/* AGENTS.md #1's "never drop these mid-ride" set, used by the low-voltage
- * cutoff (AGENTS.md #7) to decide what it may suppress.
+/* The "never drop these mid-ride" set, used by the low-voltage cutoff to
+ * decide what it may suppress.
  *
- * Now read straight off the channel's `essential` flag rather than inferred
- * from a function tag. `is_ignition` and `is_brake` are folded in
- * unconditionally: those two are non-negotiable under #1, so a config that
- * forgot to tick `essential` on them still cannot shed them.
+ * Read straight off the channel's `essential` flag rather than inferred from
+ * a role. `is_ignition` and `is_brake` are folded in unconditionally: those
+ * two are non-negotiable under ride-safe failure, so a config that forgot to
+ * tick `essential` on them still cannot shed them.
  *
  * The starter is deliberately NOT essential — it has its own guards
  * (engine-running inhibit, interlock, local-only) and offering starter
@@ -428,6 +425,6 @@ int mc_output_find_ignition_channel(const mc_output_config_t *config);
  * function of the config; does not touch hardware. */
 uint32_t mc_output_config_validate(const mc_output_config_t *config);
 
-/* Fills `out` with sensible defaults: all channels MC_OUT_FUNC_NONE, off,
- * empty names. */
+/* Fills `out` with sensible defaults: every channel unnamed, off, TOGGLE,
+ * full brightness, and with no role flags set. */
 void mc_output_config_default(mc_output_config_t *out);

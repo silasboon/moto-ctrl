@@ -159,7 +159,7 @@ void ble_app_start(mc_app_t *app)
     ble_hs_cfg.sync_cb = on_sync;
     ble_hs_cfg.store_status_cb = ble_store_util_status_rr;
 
-    /* LE Secure Connections + bonding (AGENTS.md #4). Just Works pairing
+    /* LE Secure Connections + bonding (phone-as-key auth). Just Works pairing
      * (no I/O) is acceptable because the real access control is the
      * application-layer Ed25519 challenge-response on top of the encrypted,
      * bonded link — a MAC/link alone is never trusted. */

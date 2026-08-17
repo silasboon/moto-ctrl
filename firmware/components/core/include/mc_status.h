@@ -43,8 +43,9 @@ typedef struct {
     uint16_t output_fault_mask;  /* bit c set => channel c faulted (mc_diag_fault_t) */
     int8_t rssi_dbm;             /* filled by the transport adapter; 0 if unknown */
     bool cheatcode_backoff;      /* wire byte 15 bit 0: cheat-code entry is in backoff */
-    bool lv_cutoff_active;       /* wire byte 15 bit 1: low-voltage cutoff is suppressing
-                                   * non-essential outputs — see mc_output_lv_cutoff_active(). */
+    /* Wire byte 15 bit 1: low-voltage cutoff is suppressing non-essential
+     * outputs — see mc_output_lv_cutoff_active(). */
+    bool lv_cutoff_active;
     /* Wire byte 15 bit 2: hazards are running. Deliberately its own bit
      * rather than something a client derives from output_state_mask: hazard
      * members BLINK, so that mask alternates several times a second and a

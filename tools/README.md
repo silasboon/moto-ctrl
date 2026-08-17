@@ -2,10 +2,20 @@
 
 Scripts supporting development and releases.
 
-- [`bootstrap-app-native.sh`](bootstrap-app-native.sh) — generates
-  `app/ios/` and `app/android/`, the native React Native project files not
-  committed by default in this scaffold (see
-  [`../app/NATIVE_SETUP.md`](../app/NATIVE_SETUP.md)).
+Most of these are wrapped by the root [`Makefile`](../Makefile) — `make
+release v=X.Y.Z` bumps the version, builds, and signs; `make publish
+v=X.Y.Z` additionally tags and creates the GitHub Release. Run `make help`
+for the full list. Use the scripts directly when you need a step on its own.
+
+- [`bump_version.py`](bump_version.py) — sets the firmware version across
+  every file that has to agree on it (the `MC_FW_VERSION_*` macros that ship
+  in the STATUS wire reply, and the integration test's hardcoded assertion).
+  The app is versioned separately, in `app/package.json`, and is not touched.
+- [`bootstrap-app-native.sh`](bootstrap-app-native.sh) — regenerates
+  `app/ios/` and `app/android/` from the pinned React Native template. Both
+  are already committed, so this is only for a React Native upgrade or a
+  repair — see [`../app/NATIVE_SETUP.md`](../app/NATIVE_SETUP.md) for what
+  a regeneration overwrites.
 - [`sign-firmware.py`](sign-firmware.py) — OTA release tooling
   (`../docs/PROTOCOL.md` §10.4-10.5). Requires PyNaCl (`pip install
   pynacl`, Apache-2.0). Two steps, run from a maintainer's machine:

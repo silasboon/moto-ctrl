@@ -8,9 +8,8 @@ this document ever disagree, that's a bug — please report it.
 The pre-hardware validation harness (sim debug GUI, QEMU boot validation)
 lets the app, the lock/immobilizer system, and diagnostics (current-sense,
 faults, engine-running/low-voltage cutoff) all be developed and tested with
-no board on the desk. Diagnostics is also where §3.1's "sim-only, no real
-logic" caveat about the fault mask stopped applying — see the rewritten
-§3.1.
+no board on the desk. Injected faults drive the real diagnostics logic, not
+a canned fault mask — see §3.1.
 
 ## 1. The test pyramid
 
@@ -354,7 +353,7 @@ asserted by a script; "N/A" means the underlying feature doesn't exist.
 | Two phones bonded, both authenticate; revoke one | Automated + GUI | Multi-key enroll/authenticate/revoke flow, itest + GUI |
 | Corrupted/unexpected NVS config on boot → safe fallback | Automated (host `test_config.c`) + GUI (§3.2) + QEMU (real NVS path, no corruption injection there yet) | The same fail-safe-to-disabled/unlocked fallback covers a corrupt lock blob (`nvs_lock_hal.c` / `sim_nvs_lock_load`) and a corrupt calibration blob (`nvs_calib_hal.c` / `sim_nvs_calib_load`, falling back to nominal/uncalibrated defaults — never a hard failure) |
 | Immobilizer locks only when parked; never while ignition live | Automated | `mc_lock_request_lock()` and the auto-lock grace timer both hard-guard on `!engine_running && !ignition_live` (`CONTRIBUTING.md` safety requirement #2) — `test_lock.c` covers the guard, the auto-lock path, and the boot-time ride-safe override (never restore into LOCKED while the engine appears to be running) |
-| Physical factory reset (hold BOOT 10s) wipes bonds + lock config | GUI/manual only (real GPIO, not simulated) | `firmware/main/factory_reset.c` — no sim equivalent, since the sim has no BOOT-pin analog; needs bench verification once hardware exists (`docs/HARDWARE_TESTING.md`) |
+| Physical factory reset (hold BOOT 10s) wipes bonds + lock config | GUI/manual only (real GPIO, not simulated) | `firmware/main/factory_reset.c` — no sim equivalent, since the sim has no BOOT-pin analog; covered on hardware only (`docs/HARDWARE_TESTING.md`) |
 
 ## 7. Other findings surfaced by this harness
 

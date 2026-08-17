@@ -160,19 +160,19 @@ export const OTA_MAX_IMAGE_SIZE = 0x180000;
 export const MCOTA_MAGIC = 'MCOT';
 export const MCOTA_HEADER_BYTES = 140;
 
-/** AGENTS.md's "Exception: firmware update check/download" — the one
+/** The single exception to this app's no-network rule (CONTRIBUTING.md,
+ * "No cloud, no telemetry, no accounts") — the one
  * baked-in URL the app is permitted to reach outside of BLE, and the only
  * network calls it ever makes. downloadFirmwareBundle() (update/
  * updateCheck.ts) trusts this constant's *host* as the sole basis for
  * validating the manifest's bundle_url — the manifest and the bundle must
- * be served from this same host (AGENTS.md: "these are the only two
- * hosts-worth of traffic — in practice, one host"). */
+ * be served from this same host. */
 export const UPDATE_MANIFEST_URL =
   'https://github.com/silasboon/moto-ctrl/releases/latest/download/manifest.json';
 
 /** MC_LOCK_METHOD_* wire bits for lock config's methods_mask (mc_protocol.h).
  * The button cheat-code is not a bit here — it's always active whenever
- * immobilizerEnabled is set (AGENTS.md #3: mandatory fallback). */
+ * immobilizerEnabled is set (layered unlock: mandatory fallback). */
 export const LOCK_METHOD = {
   PHONE: 1 << 0,
   IGNITION_SWITCH: 1 << 1,

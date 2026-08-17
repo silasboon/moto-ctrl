@@ -5,11 +5,10 @@
  * Scanning starts on its own as soon as the screen appears, because with a
  * board on the bike there is exactly one thing a rider ever wants here.
  *
- * The simulator transport is deliberately NOT offered. SimTransport still
- * exists and is still required — AGENTS.md mandates the two-implementation
- * transport split, and the app's CI integration test drives the real
- * firmware/sim through it — it simply has no place in the rider-facing UI now
- * that hardware exists.
+ * The simulator transport is deliberately NOT offered here. SimTransport
+ * still exists and is still required — the app's CI integration test drives
+ * the real firmware/sim through it — but it is a development tool, not
+ * something to put in front of a rider.
  */
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {

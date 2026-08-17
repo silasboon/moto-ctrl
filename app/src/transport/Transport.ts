@@ -2,7 +2,7 @@
  * Transport is the one boundary between app logic and however bytes
  * actually reach a MOTO-CTRL board. All BLE/key logic in this app must be
  * written against this interface, never against react-native-ble-plx or a
- * socket directly — see AGENTS.md ("Stack choices").
+ * socket directly.
  *
  * Two implementations:
  *  - BlePlxTransport — real hardware, via react-native-ble-plx.
@@ -21,7 +21,8 @@
 export type ConnectionState = 'disconnected' | 'connecting' | 'connected';
 
 export interface DeviceDescriptor {
-  /** Transport-specific identifier (BLE MAC/UUID, or sim connection id). Not trusted for auth — see AGENTS.md safety requirement 4. */
+  /** Transport-specific identifier (BLE MAC/UUID, or sim connection id).
+   * Never trusted for auth — see mc_crypto.h's challenge-response. */
   id: string;
   name: string;
 }

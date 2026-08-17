@@ -1,8 +1,8 @@
 /*
  * mc_ota — the OTA update state machine. Deterministic,
  * synthetic-HAL coverage of every state transition and rejection path,
- * mirroring the "extra test coverage — every state transition" bar
- * AGENTS.md sets for other safety-relevant modules (lock, output).
+ * mirroring the every-state-transition coverage bar the other
+ * safety-relevant modules (lock, output) are held to.
  */
 #include "mc_ota.h"
 

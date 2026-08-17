@@ -1,7 +1,7 @@
 /**
  * Unit tests for the firmware update-check module — the one place this app
- * makes a network call outside BLE (AGENTS.md's "Exception: firmware
- * update check/download"). Mocks global.fetch; no real network access.
+ * makes a network call outside BLE. Mocks global.fetch; no real network
+ * access.
  */
 import nacl from 'tweetnacl';
 

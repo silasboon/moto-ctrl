@@ -274,7 +274,7 @@ static void handle_command(mc_session_t *s, mc_app_t *app,
             break;
         default:
             /* starter remote-blocked / engine-running / interlock, etc.
-             * (AGENTS.md #6). The engine is the authority; BLE never
+             * (starter protection). The engine is the authority; BLE never
              * overrides it. */
             result = MC_RESULT_REJECTED;
             break;
@@ -747,14 +747,13 @@ static void config_commit(mc_app_t *app, mc_session_t *s, mc_send_fn send, void 
         return;
     }
 
-    /* Apply configuration (functions, names, modes, interlock, input
+    /* Apply configuration (role flags, names, behaviours, interlock, input
      * bindings) but preserve each channel's live commanded_on state — a
-     * config import must never toggle outputs (AGENTS.md #1). `mode` is NOT
-     * forced from the live on/off state here:
-     * mode (plain/PWM/flash pattern) is itself part of what a config
-     * import is for — e.g. this is how a channel gets opted into
-     * MC_OUT_MODE_FLASH_TURN in the first place — so the imported value is
-     * kept as-is, same as function/name/pwm_duty_pct. */
+     * config import must never toggle outputs (ride-safe failure).
+     * `behaviour` is NOT forced from the live on/off state here: it is
+     * itself part of what a config import is for — e.g. this is how a
+     * channel gets opted into MC_OUT_BEHAVIOUR_BLINK in the first place —
+     * so the imported value is kept as-is, same as name/pwm_duty_pct. */
     for (uint8_t ch = 0; ch < MC_OUTPUT_COUNT; ch++) {
         incoming.outputs.channels[ch].commanded_on = mc_output_get_state(app->output, ch);
     }

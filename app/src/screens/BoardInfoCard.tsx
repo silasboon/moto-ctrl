@@ -1,10 +1,8 @@
 /**
- * Firmware version and uptime, shown at the top of Settings.
- *
- * These used to sit on the Ride screen. They're the kind of thing you read
- * once when something is wrong — before reporting a fault, or to check an
- * update took — not while pulling gloves on, so they were taking room from
- * the two controls that screen exists for.
+ * Firmware version and uptime, shown at the top of Settings rather than on
+ * the Ride screen: you read these once when something is wrong — before
+ * reporting a fault, or to check an update took — not while pulling gloves
+ * on.
  */
 import React, { useEffect, useState } from 'react';
 import { StyleSheet, Text, View } from 'react-native';

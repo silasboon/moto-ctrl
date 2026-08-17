@@ -508,7 +508,7 @@ static void *ticker_thread(void *arg)
         /* Ticked first so mc_diag's mc_output_get_actual_state() calls this
          * same tick already see the current blink phase, and so
          * mc_lock sees this same tick's freshest engine_running
-         * (voltage-derived, AGENTS.md #6) — mirrors firmware/main/main.c's
+         * (voltage-derived, starter protection) — mirrors firmware/main/main.c's
          * app_task ordering. */
         momentary_tick();
         mc_output_tick(&g_output, t);
@@ -582,8 +582,8 @@ static void *ticker_thread(void *arg)
                 }
 
                 /* action_suppressed: a chord containing this button already
-                 * fired. The cheat-code feed above ignores it (AGENTS.md
-                 * #3); only action dispatch honours it. */
+                 * fired. The cheat-code feed above ignores it (layered
+                 * unlock); only action dispatch honours it. */
                 if (!evt.data.press.action_suppressed &&
                     !input_actions_suppressed()) {
                     dispatch_action_list(actions_for_press(evt.data.press.button, evt.data.press.type), t);

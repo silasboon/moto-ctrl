@@ -12,7 +12,7 @@
  * sequences — no real clock or hardware involved.
  *
  * The combo matcher is the generic mechanism behind the unlock cheat-code
- * (AGENTS.md safety requirement #3: a configurable 4-10 press sequence
+ * (layered unlock: a configurable 4-10 press sequence
  * with a timing window) as well as any other chord/sequence binding.
  * This module builds and tests the matcher itself; what a matched combo
  * *does* (unlock, action binding) is wired up by the modules that consume
@@ -52,7 +52,7 @@ typedef struct {
              * dropping the event: the unlock cheat-code is fed by short
              * presses, so swallowing them could make the immobilizer
              * un-unlockable for a rider whose cheat-code buttons overlap a
-             * chord — AGENTS.md #3 forbids ever locking the rider out. The
+             * chord — layered unlock forbids ever locking the rider out. The
              * cheat-code and sequence matchers therefore ignore this flag;
              * only action dispatch honours it. */
             bool action_suppressed;
@@ -155,7 +155,7 @@ void mc_input_init(mc_input_engine_t *eng, const mc_input_config_t *config);
  * Debounced BUTTON state is deliberately preserved: zeroing it would make a
  * currently-held switch read as released, which for a held brake lever would
  * drop the brake light — a config import must never change output state
- * (AGENTS.md #1). */
+ * (ride-safe failure). */
 void mc_input_set_config(mc_input_engine_t *eng, const mc_input_config_t *config);
 
 /* Feed the current sampled state of all 8 buttons (true = pressed).

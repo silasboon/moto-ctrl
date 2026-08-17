@@ -3,7 +3,7 @@
 /*
  * mc_config_json — maps the binary mc_config_t to/from JSON, the wire form
  * of the config service (docs/PROTOCOL.md) and the app's config
- * backup/restore format (AGENTS.md, Config section).
+ * backup/restore format.
  *
  * The JSON is the interoperable, human-readable representation; mc_config_t
  * is the internal binary form. Keeping the two in one place means the

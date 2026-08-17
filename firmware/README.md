@@ -176,38 +176,31 @@ Verified: host `ctest` (12 suites, including `test_ota.c`/
 `test_event_log.c`), the Node integration suite (33 cases against a real
 spawned sim, including a full signed OTA transfer, safe-state-gating
 rejection, and event log read/since_seq coverage), and the app's own Jest
-suite (71 cases across 5 files) — all pass. `firmware/main/` (including
-`ota_hal.c`, `nvs_event_log_hal.c`, and `factory_reset.c`'s event-log wipe)
-has **not** been compiled by any tool in this development environment — no
-local ESP-IDF toolchain — and rests on manual review only; only the shared
-portable core (`components/core/`, including `mc_ota.c`/`mc_event_log.c`
-themselves) is proven by a real compiler here, via the host simulator
-build. No QEMU run or bench hardware validation has happened either, for
-the same reason — see `docs/HARDWARE_TESTING.md` for the checklist that
-will eventually close that gap.
+suite (116 cases across 11 files) — all pass. Beyond that, the firmware has
+been built for the real `esp32s3` target, flashed to a board, and driven
+over BLE from the app, and the bench checklist in
+[`../docs/HARDWARE_TESTING.md`](../docs/HARDWARE_TESTING.md) has been worked
+through against real hardware. Re-run that checklist per release rather than
+treating it as settled — it is the only layer that covers real GPIO, real
+current sensing, and real BLE.
 
-Two things worth flagging rather than treating as settled, surfaced while
-writing the hardware docs — neither has been checked against real
-hardware:
+Two implementation notes worth knowing about:
 
 - `firmware/sdkconfig.defaults` enables
-  `CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE`, but nothing in `firmware/main/`
-  currently calls `esp_ota_mark_app_valid_cancel_rollback()` (or
-  equivalent) after a successful boot. If that's still true when this runs
-  on real hardware, an OTA update that reports success may still get rolled
-  back by the bootloader on its *second* reboot. See
-  `docs/HARDWARE_TESTING.md` §11.
-- The physical factory reset is now a 5-second arming window watched on the
-  app tick (`factory_reset_init()` / `factory_reset_tick()`), not a sample at
-  boot. The old single-sample version was unreachable by hand: holding BOOT
-  through reset enters UART download mode, because BOOT is GPIO0 and its
-  level at the strap instant selects the boot path, so `app_main()` never
-  ran; and releasing reset first left only a few hundred ms to press before
-  the sample had passed. The gesture is "apply power, then press and hold
-  BOOT" — see `firmware/main/factory_reset.h`, `docs/FLASHING.md`'s Factory
-  reset section, and `docs/HARDWARE_TESTING.md` §9. **Not yet exercised on
-  real silicon**, including the watchdog feed across the confirmation
-  blink.
+  `CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE`, so every OTA-updated image boots
+  in "pending verify" state and the bootloader would revert on the *next*
+  reset unless the image confirms itself. `app_main()` calls
+  `esp_ota_mark_app_valid_cancel_rollback()` as its last step, once every
+  boot stage (config/output/lock restore, diagnostics, input, watchdog,
+  BLE) has completed without crashing — see the comment at that call site,
+  and `docs/HARDWARE_TESTING.md` §11 for the reset-after-OTA check.
+- The physical factory reset is a 5-second arming window watched on the app
+  tick (`factory_reset_init()` / `factory_reset_tick()`), not a sample at
+  boot: holding BOOT through reset enters UART download mode, because BOOT
+  is GPIO0 and its level at the strap instant selects the boot path, so
+  `app_main()` would never run. The gesture is "apply power, then press and
+  hold BOOT" — see `firmware/main/factory_reset.h`, `docs/FLASHING.md`'s
+  Factory reset section, and `docs/HARDWARE_TESTING.md` §9.
 
 The generic `combos[]` chord/sequence mechanism dispatches its own
 `actions` list, orthogonal to the lock cheat-code and to the per-button

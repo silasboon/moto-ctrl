@@ -21,10 +21,9 @@ identify the actual circuits before connecting anything.
   [`hardware/PINOUT.md`](../hardware/PINOUT.md)); there is no "the brake
   light terminal" printed on the board. You wire a given motorcycle circuit
   to whichever output terminal is physically convenient, then use the
-  app's Pin Mapper screen to tell that channel what it is (`headlight_hi`,
-  `headlight_lo`, `brake`, `turn_l`, `turn_r`, `horn`, `ignition`,
-  `starter`, or `aux`) and give it a friendly name. Decide your layout on
-  paper first, wire it, then configure it in the app to match — and label
+  app's Outputs screen to give that channel a name, pick how it switches,
+  and tick the few role flags that carry real behaviour. Decide your layout
+  on paper first, wire it, then configure it in the app to match — and label
   your wiring (tags, a diagram taped in the seat pocket) so a future you
   or a mechanic isn't guessing.
 - **Bench-test before installing.** Power the board on the bench, pair it
@@ -56,29 +55,48 @@ CN1 is a KF142V-5.08-12P terminal block: pin N = OUT*N* for N = 1…12
 supplies switched +12V to the load; the load's other side returns to
 chassis ground, same as any factory-wired 12V lighting/accessory circuit.
 
-Typical functions you'd assign in the Pin Mapper (see
-[`docs/PROTOCOL.md`](PROTOCOL.md) §9 for the full field list): headlight
-high/low beam, brake light, left/right turn signals, horn, ignition
-(switched feed to the ignition system — the interlocked one, see below),
-starter (relay coil — see the starter section below, this one is special),
-and a few spare `aux` channels for accessories (heated grips, driving
-lights, etc.).
+There is no fixed list of functions to pick from: a channel gets a
+free-text name you choose ("Low Beam", "Heated Grips"), so name it after
+whatever you actually wired to it.
 
-Mode per channel (also set in Pin Mapper) controls how a channel switches,
-independent of what it's wired to:
+**Behaviour** (Outputs screen) controls how a channel switches, independent
+of what it's wired to:
 
-- **on/off** — plain digital switching. The right default for anything
-  that isn't a turn signal or brake light — including LED lighting, which
-  can flicker or misbehave under PWM.
-- **PWM dimmed** — steady dimmed brightness while commanded on. Off by
-  default per-channel; only turn it on for loads you've confirmed tolerate
-  PWM (check with incandescent bulbs or PWM-friendly LED drivers first).
-- **turn-signal blink / brake flasher** — full on/off switching at a
-  configurable rate, never partial duty, so it works with any lamp type
-  including LED turn signals with no separate flasher relay or load
-  resistors needed. Brake flasher patterns aren't legal in every
-  jurisdiction — check your local vehicle code before enabling one (see
-  the in-app note); it's off by default.
+- **toggle** — latching on/off. The right default for anything that isn't a
+  turn signal or brake light.
+- **momentary** — on only while its trigger is held (a held button, or a
+  maintained switch like a brake lever).
+- **blink** — full on/off flashing at a configurable rate. Turn signals,
+  hazards, and anything you want blinking alongside them.
+- **flasher** — a short attention-pulse burst on switch-on, then solid.
+  Intended for the brake light.
+
+Blink and flasher are always full on/off switching, never partial duty, so
+they work with any lamp type including LED turn signals — no separate
+flasher relay or load resistors needed. Brake flash patterns aren't legal
+in every jurisdiction; check your local vehicle code before enabling one
+(see the in-app note), and note it's off by default.
+
+**PWM dimming** is separate from behaviour: set a channel's duty below 100%
+and it dims whenever it's driven on. Off by default per channel — only turn
+it on for loads you've confirmed tolerate PWM (LED lighting in particular
+can flicker or misbehave under it). It never applies to blink or flasher.
+
+**Role flags** are the only channel properties that carry safety logic, and
+each is ticked explicitly rather than inferred from a name (see
+[`docs/PROTOCOL.md`](PROTOCOL.md) §9 for the full field list):
+
+- `essential` — never shed by the low-voltage cutoff. Tick it on anything
+  that must not go dark or dead mid-ride: headlight, ignition, brake light,
+  fuel pump.
+- `is_ignition` — the immobilizer's target, and what the firmware reads to
+  decide the bike is "running". At most one channel.
+- `is_starter` — the starter output, which is special (see below). At most
+  one channel.
+- `is_brake` — the brake light, driven directly from the brake switch input.
+- `indicator` (left/right) — a turn signal, which gets mutual exclusion and
+  the auto-cancel timer. A channel that merely blinks along with the hazards
+  (a DRL, say) is not an indicator — mark it a hazard member instead.
 
 ### Starter output — hardware button only, wired specially
 
@@ -90,8 +108,8 @@ the way you'd wire any
 starter-relay trigger circuit: the output drives the starter relay coil,
 not the starter motor directly. If your bike has (or you're adding) a
 neutral/clutch safety interlock, wire that switch to one of the eight
-button inputs and assign it as the `starter_interlock_input` in the Pin
-Mapper — it's optional but recommended.
+button inputs and assign it as the `starter_interlock_input` on the Outputs
+screen — it's optional but recommended.
 
 ### Brake light — priority over any flasher pattern
 
@@ -123,7 +141,7 @@ short the input to ground when pressed/closed — no external pull-up
 needed). Assign each input's short-press/long-press/double-press action in
 the app, and use the dedicated fields for the two inputs that have a fixed
 special meaning: `starter_interlock_input` and `brake_switch_input`
-(Pin Mapper, both optional). The button cheat-code (immobilizer fallback
+(Outputs screen, both optional). The button cheat-code (immobilizer fallback
 unlock, see `docs/PROTOCOL.md` §11) is entered as a sequence of these same
 handlebar button presses — decide your cheat-code layout with your final
 button wiring in mind.
@@ -131,11 +149,13 @@ button wiring in mind.
 ## Phone-as-key and the immobilizer
 
 Nothing extra to wire for phone-as-key — it's BLE, not a physical
-connection. If you enable the immobilizer, the button cheat-code (via
-whichever inputs you wired to CN2) is always available as a fallback even
-with phone-as-key enabled — you cannot wire yourself out of the bike.
-Optional traditional ignition-switch mode uses one of the
-eight inputs the same way as the starter interlock/brake switch above.
+connection. The immobilizer cannot be enabled until you've configured at
+least one non-phone way in, so you cannot wire yourself out of the bike:
+either the button cheat-code (entered on whichever inputs you wired to CN2)
+or a traditional ignition-switch input. That switch uses one of the eight
+inputs the same way as the starter interlock/brake switch above. Whichever
+you configure stays available even with phone-as-key enabled, and you can
+set up both.
 
 ## After wiring: verify before riding
 

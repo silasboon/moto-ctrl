@@ -21,7 +21,7 @@ Hardware design sources for MOTO-CTRL, licensed under CC BY-NC-SA 4.0 (see
 
 | Revision | Status | Notes |
 |----------|--------|-------|
-| v1 ("Integrated V2") | current | First released hardware revision — "Integrated V2" is the schematic's own internal board name, from before this was a public project; the repo's revision numbering starts fresh at v1. See `PINOUT.md`, dated 2026-07-18. Design files to be added to `releases/v1/`. |
+| v1 ("Integrated V2") | current | First released hardware revision — "Integrated V2" is the schematic's own internal board name, from before this was a public project; the repo's revision numbering starts fresh at v1. See `PINOUT.md`, dated 2026-07-18. Design files are in [`releases/v1/`](releases/v1/). |
 
 Only one PROFET may have DEN high at a time, GPIO3/GPIO46 are strapping
 pins used safely by design (see `PINOUT.md`'s warning) — if you're revising

@@ -197,7 +197,7 @@ static void test_bad_channel_rejected(void)
     assert(mc_output_get_state(&eng, MC_OUTPUT_COUNT) == false);
 }
 
-/* --- Low-voltage cutoff (AGENTS.md #7) --- */
+/* --- Low-voltage cutoff --- */
 
 static void test_lv_cutoff_suppresses_nonessential_preserves_commanded_on(void)
 {
@@ -279,7 +279,7 @@ static void test_lv_cutoff_no_op_when_already_set(void)
 }
 
 /* The essential set is now explicit per channel rather than derived from a
- * function tag — the change that keeps AGENTS.md #1 enforceable once the
+ * function tag — the change that keeps ride-safe failure enforceable once the
  * headlight tags went away. */
 static void test_channel_is_essential(void)
 {
@@ -317,12 +317,12 @@ static void test_channel_is_essential(void)
 
 static void test_default_config_mode_is_on(void)
 {
-    /* Mode independently describes electrical behavior (plain digital
-     * vs PWM vs a flasher pattern) rather than being derived from
-     * commanded_on — see mc_output_config_default()'s
-     * comment. MC_OUT_MODE_ON must be the default so a freshly-assigned
-     * channel behaves as ordinary digital on/off until explicitly opted
-     * into something else. */
+    /* Behaviour independently describes how a channel acts when triggered
+     * (latching, momentary, blink, flasher) rather than being derived from
+     * commanded_on — see mc_output_config_default()'s comment.
+     * MC_OUT_BEHAVIOUR_TOGGLE must be the default so a freshly-assigned
+     * channel behaves as ordinary on/off until explicitly opted into
+     * something else. */
     mc_output_config_t cfg;
     mc_output_config_default(&cfg);
     for (int i = 0; i < MC_OUTPUT_COUNT; i++) {
@@ -465,7 +465,7 @@ static void test_hazard_noop_without_turn_channels(void)
     assert(rec.count == 0);
 }
 
-/* --- MC_OUT_MODE_FLASH_TURN blink phase --- */
+/* --- MC_OUT_BEHAVIOUR_BLINK blink phase --- */
 
 static void test_flash_turn_blink_phase(void)
 {
@@ -513,7 +513,7 @@ static void test_flash_turn_channels_stay_in_sync(void)
     }
 }
 
-/* --- MC_OUT_MODE_FLASH_BRAKE attention burst --- */
+/* --- MC_OUT_BEHAVIOUR_FLASHER attention burst --- */
 
 static void test_flash_brake_burst_then_solid(void)
 {
@@ -688,7 +688,7 @@ static void test_config_validate_flags_zero_turn_period(void)
     assert(mc_output_config_validate(&cfg) & MC_OUT_CFG_BAD_TURN_PERIOD);
 }
 
-/* AGENTS.md #6: the starter must be inhibited while the engine is running.
+/* starter protection: the starter must be inhibited while the engine is running.
  * The command-time guard only covers "don't start cranking now"; the case
  * that wrecks a starter motor is being already engaged when the engine
  * catches, with the rider still holding the button. */
@@ -726,7 +726,7 @@ static void test_starter_is_cut_when_engine_starts(void)
 }
 
 /* Only the starter is cut — an engine starting must not disturb anything
- * else, least of all ignition or lights (AGENTS.md #1). */
+ * else, least of all ignition or lights (ride-safe failure). */
 static void test_engine_start_does_not_disturb_other_channels(void)
 {
     mc_output_config_t cfg;
@@ -1153,7 +1153,7 @@ static void test_ignition_off_sweep_is_edge_triggered(void)
     assert(mc_output_get_state(&eng, 7) == true);
 }
 
-/* AGENTS.md #1: restore replays exactly what was last commanded. Synthesising
+/* ride-safe failure: restore replays exactly what was last commanded. Synthesising
  * an ignition edge at boot would light companions the rider had switched off
  * before parking. */
 static void test_restore_does_not_fire_the_ignition_edge(void)

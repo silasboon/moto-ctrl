@@ -17,7 +17,7 @@
  *
  * Fetches its own DeviceConfig (for channel names only, never edited here)
  * rather than receiving it as a prop — same independent-fetch pattern
- * DashboardScreen/LockScreen/PinMapperScreen already each follow.
+ * DashboardScreen/LockScreen/OutputsScreen already each follow.
  */
 import React, { useEffect, useState } from 'react';
 import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';

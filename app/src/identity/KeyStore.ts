@@ -1,6 +1,6 @@
 /**
  * Persists this phone's Ed25519 identity (its "key" for phone-as-key
- * pairing, AGENTS.md safety requirement #4) and the last-paired device.
+ * pairing, phone-as-key auth) and the last-paired device.
  *
  * Storage: @react-native-async-storage/async-storage — plain local
  * storage, offline-first, nothing leaves the phone. This is a deliberate

@@ -9,7 +9,7 @@
  *
  * The unmount case matters more than it looks: learn mode makes the board push
  * a frame on every handlebar press, so a screen that forgets to disable it
- * leaves the radio chattering for the rest of the ride (AGENTS.md #7).
+ * leaves the radio chattering for the rest of the ride (battery protection).
  */
 import React from 'react';
 import {

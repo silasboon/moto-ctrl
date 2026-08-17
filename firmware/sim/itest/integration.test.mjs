@@ -442,7 +442,7 @@ test('wrong cheat code repeated triggers backoff; phone unlock still works throu
     assert.equal(st.lockState, LOCK_STATE.LOCKED);
 
     // ...but the phone (an unrelated method) is never gated by cheat-code
-    // backoff — AGENTS.md #3: never lock the rider out.
+    // backoff — layered unlock: never lock the rider out.
     const unlockRes = await client.unlock();
     assert.equal(unlockRes.result, RESULT.OK);
     st = await client.getStatus();

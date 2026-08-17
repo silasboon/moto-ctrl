@@ -13,7 +13,7 @@ together or the sim integration suite fails on the very next run:
     which is that same wire value round-tripped and re-asserted.
 
 Does NOT touch app/package.json's version -- the app and firmware are
-versioned independently (see AGENTS.md).
+versioned independently.
 """
 import re
 import sys

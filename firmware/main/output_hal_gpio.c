@@ -24,11 +24,10 @@ void output_hal_gpio_init(void)
     gpio_config(&io_conf);
 }
 
-/* --- PWM dimming, lazily attached (⚠ bench-unverified — no local
- * ESP-IDF toolchain to compile this).
+/* --- PWM dimming, lazily attached.
  *
- * PWM dimming is opt-in per channel and off by default (AGENTS.md's
- * PWM/flasher rule) — most boards will never call output_hal_gpio_set_duty()
+ * PWM dimming is opt-in per channel and off by default (the PWM/flasher
+ * rule) — most boards will never call output_hal_gpio_set_duty()
  * at all, so this deliberately does NOT reconfigure every output pin onto
  * LEDC at init time (that would mean every channel, including the common
  * case of a plain digital load, goes through the LEDC peripheral instead of
@@ -36,9 +35,9 @@ void output_hal_gpio_init(void)
  * benefit). Instead, a channel's pin is claimed onto LEDC only the first
  * time dimming is actually requested for it; a channel that's never used
  * PWM mode always takes the plain gpio_set_level() path below, including
- * every flasher-pattern channel (AGENTS.md: flashers are always full
- * on/off, never partial duty, so mc_output.c never calls set_duty() for
- * one) — zero LEDC overhead or risk for the common case.
+ * every flasher-pattern channel (flashers are always full on/off, never
+ * partial duty, so mc_output.c never calls set_duty() for one) — zero LEDC
+ * overhead or risk for the common case.
  *
  * Once a channel HAS been attached to LEDC, though, the peripheral owns
  * that pin's signal — a later plain gpio_set_level() call would fight the

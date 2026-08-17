@@ -5,16 +5,15 @@
  *
  * NVS flash has a limited erase-cycle budget, and mc_output_set() /
  * config changes can happen far more often than they need to be
- * committed to flash (AGENTS.md: "state persistence strategy that
- * respects NVS flash wear (debounced writes)"). Mark the store dirty on
+ * committed to flash. Mark the store dirty on
  * every change; a caller (firmware/main's config task) polls
  * mc_persist_should_flush() at its own cadence and only then calls
  * mc_config_save() and mc_persist_mark_flushed().
  *
  * This does not affect the boot-time restore path (mc_output_restore_
  * from_config) — that always applies whatever was last actually flushed,
- * which is the persisted state AGENTS.md safety requirement #1 requires
- * be restored within 250ms of a reboot.
+ * which is the persisted state ride-safe failure requires be restored
+ * within 250ms of a reboot.
  */
 
 #include "mc_types.h"

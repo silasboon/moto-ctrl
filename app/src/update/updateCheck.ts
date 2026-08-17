@@ -2,8 +2,8 @@
  * Firmware update check/download.
  *
  * This is the ONE exception to "the app talks to the board over BLE and
- * nothing else over the network" (AGENTS.md's "Exception: firmware update
- * check/download") — kept in its own module, deliberately separate from
+ * nothing else over the network" (CONTRIBUTING.md, "No cloud, no telemetry,
+ * no accounts") — kept in its own module, deliberately separate from
  * protocol/ (which is BLE/simulator wire protocol only), so the one place
  * this app reaches outside BLE is easy to find and audit. Exactly two
  * anonymous HTTPS GETs, both to the single baked-in UPDATE_MANIFEST_URL
@@ -12,7 +12,7 @@
  * parsed here, and tools/sign-firmware.py for how a release produces them.
  *
  * Callers must never let a failure here block BLE pairing/control of the
- * board (AGENTS.md's mandatory constraint) — catch UpdateCheckError and
+ * board — catch UpdateCheckError and
  * show "unable to check for updates", don't propagate it as a fatal error.
  */
 import nacl from 'tweetnacl';
@@ -27,7 +27,7 @@ import type { FirmwareBundle, UpdateManifest } from '../protocol/types';
 
 export class UpdateCheckError extends Error {}
 
-/** AGENTS.md: the manifest's bundle_url is remote input (the manifest could
+/** The manifest's bundle_url is remote input (the manifest could
  * be corrupt, tampered, or — since it's fetched over plain HTTPS with no
  * app-layer auth of its own — pointed at something else entirely) and must
  * be rejected unless it is https:// and on the same host as

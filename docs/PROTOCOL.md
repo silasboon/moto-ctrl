@@ -309,9 +309,9 @@ defaults; unknown `function` strings map to `"none"`.
 - `pwm_duty_pct`: 1–100. Below 100 dims the channel whenever it is driven on.
   Now a **modifier** rather than a mode, so it composes with `toggle` and
   `momentary`; never applied to `blink`/`flasher`, which are full on/off by
-  AGENTS.md's PWM/flasher rule.
+  the PWM/flasher rule.
 - **Role flags** — the only channel properties carrying safety logic:
-  - `essential` — never switched off by the low-voltage cutoff (AGENTS.md #1).
+  - `essential` — never switched off by the low-voltage cutoff.
     `is_ignition` and `is_brake` are treated as essential regardless, so a
     config that forgets to set it still cannot shed them.
   - `is_ignition` — the immobilizer's target, and how the lock knows the bike
@@ -875,7 +875,7 @@ cheat-code already set (§11.2) *or* `IGNITION_SWITCH` enabled with a valid
 (§9 — nothing to immobilize otherwise); enabling `IGNITION_SWITCH` requires a
 valid `ignition_switch_input` (0–7).
 
-The fallback rule is AGENTS.md #3: the phone may never be the only way in, so
+The fallback rule: the phone may never be the only way in, so
 a flat phone battery can't strand the rider. It used to require the
 cheat-code specifically; a rider with an OEM key switch wired to an input
 already has a physical fallback, and forcing them to also set a code they
@@ -1189,9 +1189,9 @@ offer to name it (`inputs.names`, §9).
 
   Handlebar controls are inert for the duration, so a client should only ask
   for it in a mode the rider deliberately entered and can see. Two things are
-  never suppressed: the **cheat-code matcher** itself, which is AGENTS.md #3's
+  never suppressed: the **cheat-code matcher** itself, which is layered unlock's
   unlock fallback and must not be disableable from the app, and the
-  **brake-switch pass-through**, which is AGENTS.md #5's brake-light
+  **brake-switch pass-through**, which is the brake-light
   guarantee.
 
   Omitting the byte means "don't suppress", so a client written against the
@@ -1201,7 +1201,7 @@ offer to name it (`inputs.names`, §9).
 
 Learn mode is **off by default and opt-in per session**, never a broadcast:
 the board must not stream an event for every handlebar press for the length
-of a ride (radio and battery discipline, AGENTS.md #7). The flag lives in the
+of a ride (radio and battery discipline). The flag lives in the
 session, so a disconnect always ends it and no timeout is needed. Enabling it
 does not change dispatch — bindings still fire normally; this is telemetry
 running alongside them, not instead of them.

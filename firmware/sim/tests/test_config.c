@@ -73,7 +73,7 @@ static void test_json_round_trip_through_load_save(void)
 /* A store returning malformed bytes (simulating flash bit-rot) must make
  * mc_config_load() fail rather than silently returning garbage — the
  * platform's "fall back to defaults on any load failure" boot behavior
- * (AGENTS.md #1, main.c) depends on this. */
+ * (ride-safe failure, main.c) depends on this. */
 static void test_load_fails_on_malformed_stored_data(void)
 {
     mem_store_t store = {0};

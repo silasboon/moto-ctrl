@@ -15,7 +15,7 @@
  * is showing it, and the device drops it on disconnect regardless.
  *
  * Everything here edits a local copy of the config and commits on Save, the
- * same model as PinMapperScreen — one config write, not a write per tap.
+ * same model as OutputsScreen — one config write, not a write per tap.
  */
 import React, {
   useCallback,
