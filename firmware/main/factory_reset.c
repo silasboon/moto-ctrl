@@ -125,6 +125,11 @@ static void perform_reset(void)
     esp_restart();
 }
 
+bool factory_reset_armed(void)
+{
+    return s_armed;
+}
+
 void factory_reset_tick(uint32_t now_ms)
 {
     if (!s_armed) {

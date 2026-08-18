@@ -62,3 +62,9 @@ void factory_reset_init(void);
  * serving the config and keystore that were just wiped. Does not return in
  * that case. */
 void factory_reset_tick(uint32_t now_ms);
+
+/* True while the arming window is still open or a press is in progress —
+ * i.e. while factory_reset_tick() still has work to do. mc_power holds the
+ * loop at full rate until this goes false, so a rider's 10s hold is timed
+ * against a tick that is actually running. */
+bool factory_reset_armed(void);

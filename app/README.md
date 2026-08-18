@@ -48,7 +48,11 @@ narrow exception). BLE/key logic must go through the `Transport` interface.
     set/clear/test, ownership transfer).
   - `DiagnosticsScreen` — live per-channel current + fault, learnable
     open-load/overcurrent thresholds, low-voltage-cutoff and
-    engine-running voltage config, board calibration.
+    engine-running voltage config, board calibration, and a live BLE
+    signal-strength (RSSI) readout — phone-side, read straight from the
+    radio via `Transport.readRssi()`, for bench-testing how far phone-as-key
+    reaches with the board mounted on the bike. Advisory only: nothing in
+    the unlock path reads this value.
   - `FirmwareUpdateScreen` (checks for/downloads/transfers a signed OTA
     update, then applies it on request), `EventLogScreen` (read-only viewer
     for the device's persisted security/safety event log), and
@@ -105,13 +109,31 @@ Known MVP simplifications, not gaps in a safety requirement:
 - `MotoClient` polls status on an interval rather than relying on
   device-pushed notifications: real firmware only replies to an explicit
   `STATUS_GET` today (unlike the simulator's dev-convenience ticker).
-- **Background BLE reconnect is not implemented.** `BlePlxTransport`
-  constructs `BleManager` with no `restoreStateIdentifier`, there is no
-  `bluetooth-central` entry in `UIBackgroundModes`, and Android has no
-  foreground service. Phone-as-key auto-unlock therefore needs the app in
-  the foreground; it will not fire with the phone locked in a pocket. This
-  is the one gap that is load-bearing for the immobilizer, which is why a
-  non-phone unlock method is mandatory before it can be enabled.
+- **Background BLE reconnect** (`src/ble/BoardSession.ts`) is what lets
+  phone-as-key reconnect and unlock without the app open. It's a single
+  always-running watch/connect/retry state machine, started unconditionally
+  at boot (`index.js`, before `AppRegistry.registerComponent`) rather than
+  from any screen, so it's already running by the time a background-relaunch
+  needs it. `src/ble/bleManager.ts` constructs the shared `BleManager` with
+  `restoreStateIdentifier`/`restoreStateFunction` (iOS CoreBluetooth state
+  restoration; `UIBackgroundModes` → `bluetooth-central` in Info.plist is
+  the corresponding capability declaration) so a fully-terminated app can
+  pick a reconnecting peripheral back up. `src/ble/nativeBleWatchService.ts`
+  bridges to `BleWatchService` (Android-only native module,
+  `android/app/src/main/java/com/motoctrl/app/ble/`) — a foreground service
+  with a persistent low-priority notification, since Android freezes or
+  kills a backgrounded process with no foreground service, which would
+  otherwise silently stop the watcher. `PairingScreen`'s own scan/tap flow
+  still exists for pairing a new board or an impatient manual reconnect
+  (`BoardSession.connectManually()`, sharing an in-flight guard with the
+  watcher so the two can never race a double-connect); App.tsx subscribes to
+  `BoardSession` directly rather than owning connection state itself.
+  Compiles and typechecks clean on both platforms (`./gradlew assembleDebug`,
+  `xcodebuild … -sdk iphonesimulator`) and the state machine has unit
+  coverage (`src/__tests__/BoardSession.test.ts`), but **has not been
+  bench-verified on real hardware** — background reconnect is exactly the
+  kind of behavior that only really proves itself on a physical phone across
+  a real suspend/kill/relaunch cycle. See `docs/HARDWARE_TESTING.md` §7.
 
 ## Development
 

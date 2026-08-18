@@ -75,6 +75,29 @@ bool mc_input_button_level(const mc_input_engine_t *eng, uint8_t button)
     return eng->buttons[button].stable_state;
 }
 
+bool mc_input_activity_pending(const mc_input_engine_t *eng)
+{
+    if (eng->event_count > 0) {
+        return true;
+    }
+    for (uint8_t i = 0; i < MC_INPUT_COUNT; i++) {
+        const mc_button_state_t *st = &eng->buttons[i];
+        /* raw_state as well as stable_state: a press that hasn't debounced
+         * yet is still a press in progress, and is exactly the moment a
+         * GPIO wake hands control back to the poll loop. */
+        if (st->raw_state || st->stable_state || st->pending_double) {
+            return true;
+        }
+    }
+    for (uint8_t i = 0; i < eng->config.combo_count; i++) {
+        const mc_combo_state_t *cs = &eng->combo_state[i];
+        if (cs->progress > 0 || cs->chord_fired) {
+            return true;
+        }
+    }
+    return false;
+}
+
 bool mc_input_hold_active(const mc_input_engine_t *eng, uint8_t button)
 {
     if (button >= MC_INPUT_COUNT) {

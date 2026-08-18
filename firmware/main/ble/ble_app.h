@@ -13,3 +13,9 @@ void ble_app_start(mc_app_t *app);
  * name plus a rebuilt advertisement, since the name lives in the
  * scan-response payload. Wire this to mc_app_t.on_device_name_changed. */
 void ble_app_refresh_device_name(void);
+
+/* Switches between the fast (in use) and slow (parked) advertising
+ * intervals, restarting advertising if the class actually changed. Driven
+ * by mc_power via power_hal — never stops advertising outright, so a parked
+ * board stays reachable by phone-as-key. */
+void ble_app_set_adv_interval(bool slow);

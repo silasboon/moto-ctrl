@@ -15,6 +15,20 @@
     <uses-permission android:name="android.permission.BLUETOOTH_SCAN" android:usesPermissionFlags="neverForLocation" />
     <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
 
+    <!-- BleWatchService: a foreground service so the process survives
+         backgrounding long enough for phone-as-key to reconnect without the
+         app open (Android 8+ kills/freezes backgrounded apps with no
+         foreground service; Doze makes it worse). FOREGROUND_SERVICE is the
+         general grant every foreground service needs;
+         FOREGROUND_SERVICE_CONNECTED_DEVICE is the specific one Android 14+
+         (API 34) requires for a service whose type is "connectedDevice" — see
+         the <service> entry below. POST_NOTIFICATIONS (Android 13+) is what
+         actually lets the service's persistent notification show; the
+         service itself still runs without it, just silently. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
     <!-- No android:roundIcon: the ic_launcher_round set was dropped when the
          launcher icons were replaced with an adaptive set (background +
          foreground + monochrome), and the leftover reference failed resource
@@ -47,5 +61,11 @@
             <category android:name="android.intent.category.LAUNCHER" />
         </intent-filter>
       </activity>
+      <!-- Started/stopped from JS (src/ble/nativeBleWatchService.ts) as
+           BoardSession's watch/connect/connected state changes. -->
+      <service
+        android:name=".ble.BleWatchService"
+        android:exported="false"
+        android:foregroundServiceType="connectedDevice" />
     </application>
 </manifest>

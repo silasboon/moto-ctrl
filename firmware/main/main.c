@@ -5,6 +5,8 @@
 
 #include "esp_log.h"
 #include "esp_ota_ops.h"
+#include "esp_sleep.h"
+#include "esp_system.h"
 #include "esp_task_wdt.h"
 #include "esp_timer.h"
 #include "nvs_flash.h"
@@ -20,6 +22,7 @@
 #include "mc_ota_release_key.h"
 #include "mc_output.h"
 #include "mc_persist.h"
+#include "mc_power.h"
 #include "mc_session.h"
 #include "mc_status.h"
 
@@ -34,6 +37,7 @@
 #include "nvs_keystore_hal.h"
 #include "nvs_lock_hal.h"
 #include "ota_hal.h"
+#include "power_hal.h"
 #include "output_hal_gpio.h"
 #include "watchdog.h"
 
@@ -49,6 +53,7 @@ static mc_ota_t s_ota;
 static mc_event_log_t s_event_log;
 static mc_app_t s_app;
 static mc_input_engine_t s_input;
+static mc_power_t s_power;
 
 /* Debounced-write schedulers respecting NVS flash wear. Lock
  * state is NOT debounced here — see persist_lock_cb: lock/cheat-code
@@ -325,13 +330,18 @@ static void app_task(void *arg)
          * few seconds of the run. */
         factory_reset_tick(t);
 
+        /* Lift the ISR mask on any button released since it woke us — see
+         * input_hal_gpio_wake_rearm(). Before the sample, so a button that
+         * has just been let go is armed again for the next press. */
+        input_hal_gpio_wake_rearm();
+
         input_hal_gpio_sample(raw);
         mc_input_poll(&s_input, t, raw);
 
         /* Ticked first so mc_diag's mc_output_get_actual_state() calls this
          * same tick already see the current blink phase, and so
          * mc_lock sees this same tick's freshest engine_running
-         * (voltage-derived, starter protection) when it evaluates its
+         * (mc_diag, starter protection) when it evaluates its
          * parked-detection guard (the parked-only lock rule). */
         mc_output_tick(&s_output, t);
 
@@ -478,8 +488,32 @@ static void app_task(void *arg)
             persist_lock_cb(NULL);
         }
 
+        /* Power policy. Assembled here rather than read by mc_power itself,
+         * same as mc_lock_inputs_t: the policy module stays portable and
+         * never reaches into another module's state. */
+        int ign_ch = mc_output_find_ignition_channel(&s_output.config);
+        mc_power_inputs_t power_inputs = {
+            .outputs_active = mc_output_any_active(&s_output, t),
+            .engine_running = s_output.engine_running,
+            .ignition_live = (ign_ch >= 0) && mc_output_get_state(&s_output, (uint8_t)ign_ch),
+            .ota_active = (mc_ota_get_state(&s_ota) != MC_OTA_IDLE),
+            .session_connected = (gatt_svr_connection_count() > 0),
+            .input_pending = mc_input_activity_pending(&s_input),
+            .factory_reset_armed = factory_reset_armed(),
+        };
+        mc_power_tick(&s_power, &power_inputs, t);
+        if (mc_power_take_profile_change(&s_power)) {
+            power_hal_apply(mc_power_get_profile(&s_power));
+        }
+
         mc_watchdog_feed();
-        vTaskDelay(pdMS_TO_TICKS(10));
+
+        /* Wait out the tick, but let a button GPIO interrupt release it
+         * early (input_hal_gpio_wake_init) — at the parked rate the timeout
+         * alone would be far too coarse to catch a press reliably. Clearing
+         * on entry as well as exit means a notify that arrived mid-tick
+         * still shortens the NEXT wait rather than being lost. */
+        ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(mc_power_get_profile(&s_power)->tick_interval_ms));
     }
 }
 
@@ -512,8 +546,18 @@ void app_main(void)
      * happens on the app tick, for a few seconds only (see factory_reset.h
      * for why a check at power-on could never actually be triggered by hand).
      * Adds no delay to boot, which ride-safe failure's <250ms output restore
-     * budget would not tolerate. */
-    factory_reset_init();
+     * budget would not tolerate.
+     *
+     * Only on a real power-on. The gesture is "apply power, then hold BOOT",
+     * so arming it on a watchdog reboot, a brownout recovery or an OTA
+     * restart would re-open the wipe window at moments the rider never asked
+     * for — several times a ride, in the OTA case. */
+    if (esp_reset_reason() == ESP_RST_POWERON) {
+        factory_reset_init();
+    } else {
+        ESP_LOGI(TAG, "factory-reset window not armed (reset reason %d, not power-on)",
+                 (int)esp_reset_reason());
+    }
 
     /* Config + keystore: degrade to defaults/empty on any NVS failure rather
      * than aborting (ride-safe failure — never let an error path drop outputs). */
@@ -640,7 +684,21 @@ void app_main(void)
     ble_app_start(&s_app);
     ESP_LOGI(TAG, "MOTO-CTRL boot: BLE stack started");
 
-    xTaskCreate(app_task, "mc_app", 4096, NULL, 5, NULL);
+    /* Power policy last, so every gate it reads (outputs, lock, diag, OTA)
+     * is already initialised and it never sees a half-built device. Both PM
+     * locks start held, so the loop below runs at full rate until the policy
+     * says otherwise. */
+    mc_power_config_t power_cfg;
+    mc_power_config_default(&power_cfg);
+    mc_power_init(&s_power, &power_cfg, now_ms());
+    power_hal_init();
+
+    TaskHandle_t app_task_handle = NULL;
+    xTaskCreate(app_task, "mc_app", 4096, NULL, 5, &app_task_handle);
+    /* Buttons must be able to cut a parked tick short — see
+     * input_hal_gpio_wake_init(). Registered after the task exists so the
+     * ISR always has something to notify. */
+    input_hal_gpio_wake_init(app_task_handle);
 
     /* CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y (sdkconfig.defaults) means
      * every OTA-updated image boots in "pending verify" state: the

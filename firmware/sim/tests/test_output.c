@@ -281,6 +281,38 @@ static void test_lv_cutoff_no_op_when_already_set(void)
 /* The essential set is now explicit per channel rather than derived from a
  * function tag — the change that keeps ride-safe failure enforceable once the
  * headlight tags went away. */
+/* mc_power's hold-awake gate. The blink case is the one that matters: a
+ * BLINK channel is dark for half its cycle, and reporting "nothing active"
+ * during the off phase would let the loop idle down and stall the tick that
+ * turns it back on. */
+static void test_any_active_tracks_commanded_and_driven(void)
+{
+    mc_output_config_t cfg;
+    mc_output_config_default(&cfg);
+    cfg.channels[0].behaviour = MC_OUT_BEHAVIOUR_BLINK;
+
+    recorder_t rec = {0};
+    mc_output_hal_t hal = { .set = hal_set, .ctx = &rec };
+    mc_output_engine_t eng;
+    mc_output_init(&eng, &cfg, hal);
+
+    mc_output_tick(&eng, 0);
+    assert(!mc_output_any_active(&eng, 0));
+
+    assert(mc_output_set(&eng, 0, true, MC_OUT_SRC_LOCAL) == MC_OUT_OK);
+    assert(mc_output_any_active(&eng, 0));
+
+    /* Half a blink period in: actually dark, still active. */
+    uint32_t half = cfg.turn_flash_period_ms / 2u;
+    mc_output_tick(&eng, half);
+    assert(!mc_output_get_actual_state(&eng, 0, half));
+    assert(mc_output_any_active(&eng, half));
+
+    assert(mc_output_set(&eng, 0, false, MC_OUT_SRC_LOCAL) == MC_OUT_OK);
+    mc_output_tick(&eng, half + 10u);
+    assert(!mc_output_any_active(&eng, half + 10u));
+}
+
 static void test_channel_is_essential(void)
 {
     mc_output_channel_config_t ch;
@@ -290,7 +322,7 @@ static void test_channel_is_essential(void)
     assert(mc_output_channel_is_essential(&ch));
 
     /* Ignition and brake are essential even if the flag was never ticked:
-     * #1 does not leave those two to a config mistake. */
+     * ride-safe failure does not leave those two to a config mistake. */
     memset(&ch, 0, sizeof(ch));
     ch.is_ignition = true;
     assert(mc_output_channel_is_essential(&ch));
@@ -1358,6 +1390,7 @@ int main(void)
     test_lv_cutoff_suppresses_nonessential_preserves_commanded_on();
     test_lv_cutoff_never_suppresses_essential();
     test_lv_cutoff_no_op_when_already_set();
+    test_any_active_tracks_commanded_and_driven();
     test_channel_is_essential();
     test_hazard_blinks_every_member_whatever_its_behaviour();
     test_hazard_member_is_solid_when_used_normally();

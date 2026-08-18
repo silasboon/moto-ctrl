@@ -46,6 +46,9 @@ void mc_diag_config_default(mc_diag_config_t *out)
     out->lv_cutoff_hysteresis_mv = MC_DIAG_DEFAULT_LV_CUTOFF_HYSTERESIS_MV;
     out->engine_run_mv = MC_DIAG_DEFAULT_ENGINE_RUN_MV;
     out->engine_run_hysteresis_mv = MC_DIAG_DEFAULT_ENGINE_RUN_HYSTERESIS_MV;
+    /* Already false from the memset above; spelled out so the default is
+     * visible here and not just implied by zero-init (mc_diag.h). */
+    out->engine_run_voltage_detection_enabled = false;
 }
 
 uint32_t mc_diag_config_validate(const mc_diag_config_t *cfg)
@@ -131,12 +134,32 @@ void mc_diag_tick(mc_diag_t *diag, mc_output_engine_t *output, uint32_t now_ms)
     diag->battery_mv = calc_battery_mv(&diag->calib, raw_vbat_mv);
 
     bool engine_running = diag->engine_running;
-    if (!engine_running && diag->battery_mv >= diag->config.engine_run_mv) {
-        engine_running = true;
-    } else if (engine_running &&
-               diag->battery_mv < (diag->config.engine_run_mv - diag->config.engine_run_hysteresis_mv)) {
+    if (diag->config.engine_run_voltage_detection_enabled) {
+        if (!engine_running && diag->battery_mv >= diag->config.engine_run_mv) {
+            engine_running = true;
+        } else if (engine_running &&
+                   diag->battery_mv < (diag->config.engine_run_mv - diag->config.engine_run_hysteresis_mv)) {
+            engine_running = false;
+        }
+    } else {
+        /* No detection source enabled: without an input trigger (not yet
+         * implemented), there is nothing left to derive engine_running
+         * from, so it stays false rather than holding a stale reading from
+         * before detection was turned off. */
         engine_running = false;
     }
+
+    /* Ignition-off override, unconditional and independent of the toggle
+     * above: an engine cannot be running with its ignition off, so this
+     * forces engine_running false whenever a channel is assigned and not
+     * live, no matter what voltage detection (or a future input trigger)
+     * concluded. Only when a channel IS assigned -- absent one, there is no
+     * ignition signal to gate on, so the detection result above stands. */
+    int ign_ch = mc_output_find_ignition_channel(&output->config);
+    if (ign_ch >= 0 && !mc_output_get_state(output, (uint8_t)ign_ch)) {
+        engine_running = false;
+    }
+
     diag->engine_running = engine_running;
     mc_output_set_engine_running(output, engine_running);
 

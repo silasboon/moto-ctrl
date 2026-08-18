@@ -49,9 +49,59 @@ signals, and real radio are involved.
       specifically in parked/advertising mode against the <2mA average
       target (`CONTRIBUTING.md` safety requirement #7) — this is a real
       current-clamp measurement, not something any simulator run can tell
-      you.
+      you. See §1.1 for the parked-power procedure.
 - [ ] 3V3 rail present and stable (LED13 power indicator, per
       `hardware/PINOUT.md`).
+
+### 1.1 Parked power (mc_power / light sleep)
+
+`mc_power` steps the board down through ACTIVE (10ms tick) → IDLE (100ms,
+light sleep) → PARKED (250ms, light sleep, ~1s BLE advertising). Reference
+point: before any of this existed the board drew ~18mA continuously, and
+~0mA with the ESP32-S3 held in reset — so essentially all of it is
+MCU-side and in play.
+
+- [ ] Baseline with EN held low is still ~0mA (confirms no new hardware
+      draw crept in).
+- [ ] Power up, leave the board completely alone with no phone connected,
+      and watch the supply. Current should step down twice: once at
+      `MC_POWER_DEFAULT_IDLE_AFTER_MS` (5s) and again at
+      `MC_POWER_DEFAULT_PARKED_AFTER_MS` (60s). Record all three levels.
+- [ ] **Wake works.** From PARKED, a single handlebar button press must
+      wake the board and register as a press — no lost first press. This is
+      the highest-risk item in this section: the GPIO interrupt notify and
+      the light-sleep wake are separate mechanisms and their interaction is
+      only settled on real silicon. If the first press is ever swallowed,
+      the 250ms parked tick is the backstop and the notify path needs
+      investigating (`input_hal_gpio_wake_init`).
+- [ ] **Maintained switch held closed.** Ground an input assigned as the
+      ignition switch and leave it grounded for several minutes, then open
+      it again. The board must stay up. Regression check: the wake path uses
+      a *level*-triggered interrupt (`gpio_wakeup_enable()` rejects edge
+      modes and rewrites the pin's interrupt type to match), so a handler
+      that does not mask its own pin re-enters forever and panics the
+      interrupt watchdog within milliseconds — a maintained switch holds the
+      pin low indefinitely, so this is certain rather than rare. Also power
+      the board up with the switch *already* grounded, which is the same bug
+      arriving during init.
+- [ ] **Cheat-code entry from cold.** With the immobilizer engaged and the
+      board parked, enter the full cheat-code at normal speed. It must
+      unlock — nothing may be dropped mid-sequence. Layered unlock: this is
+      the case where a bug locks a rider out of their own bike.
+- [ ] **Phone reconnect from parked.** A paired phone must still connect
+      and authenticate while the board is in PARKED (slower to be
+      discovered is expected — roughly a second — failing to connect is
+      not).
+- [ ] **Never sleeps in use.** With any output on, the engine running, or
+      an OTA in flight, current must stay at the ACTIVE level and blink /
+      flasher timing must look unchanged by eye. A visible change in blink
+      rate means a hold-awake gate is not doing its job.
+- [ ] OTA transfer completes at the same speed as before.
+- [ ] If the numbers come in higher than hoped, the first knob to try is
+      `CONFIG_BT_CTRL_MAIN_XTAL_PU_DURING_LIGHT_SLEEP=n` in
+      `sdkconfig.defaults` — but re-run the phone-reconnect and
+      connection-stability items after changing it, since the main crystal
+      is the BLE controller's low-power clock on this board.
 
 ## 2. Outputs (bench, one channel at a time)
 
@@ -104,9 +154,19 @@ Using a bench PSU in place of the battery:
 - [ ] Confirm essential outputs (whichever channels you've ticked
       `essential`, plus the `is_ignition`/`is_brake` ones) are **never**
       suppressed by the cutoff, even at the lowest voltage tested.
-- [ ] Raising voltage into the configured `engine_run_mv` threshold (charging
-      voltage) makes `engine_running` become true (visible via the
-      diagnostics config / starter-inhibited behavior in §6).
+- [ ] Voltage-based `engine_running` detection is **off by default**
+      (`engineRunVoltageDetectionEnabled`, Diagnostics screen) — with it
+      off, raising voltage past `engine_run_mv` must NOT make
+      `engine_running` become true. This is the actual bug this toggle
+      exists to fix: without it, a booster pack or this bench PSU alone
+      would read as "engine running" and the starter test in §6 would find
+      itself falsely refused.
+- [ ] Turn the toggle on and confirm raising voltage into `engine_run_mv`
+      now does make `engine_running` become true (visible via the
+      diagnostics config / starter-inhibited behavior in §6), and that it
+      clears again below `engine_run_mv - engine_run_hysteresis_mv`. Turn
+      it back off afterward before continuing to §6, so the rest of the
+      starter checklist reflects the real default a rider ships with.
 
 ## 5. Inputs
 
@@ -132,9 +192,17 @@ For each of BTN1–BTN8 (mind CN2's reversed pin order, `hardware/PINOUT.md`):
 - [ ] The physical starter button (wired to one of BTN1–BTN8) does fire the
       starter output when the engine isn't running and (if configured) the
       neutral/clutch interlock input is satisfied.
-- [ ] With `engine_running` true (§4's voltage-based detection, or the
-      actual engine running once installed), confirm the starter button no
-      longer fires the output.
+- [ ] With `engine_running` true (§4's voltage-based detection with the
+      toggle explicitly enabled, or the actual engine running once
+      installed), confirm the starter button no longer fires the output.
+- [ ] **Ignition-off override.** Assign an output channel as `is_ignition`
+      and leave voltage-based detection off (the shipping default). With
+      the ignition channel OFF, confirm `engine_running` reads false no
+      matter how high the bench PSU is driven — this is the fix for the
+      booster-pack/jump-start false positive, and it must hold regardless
+      of the voltage toggle. Turn the ignition channel ON and confirm the
+      starter button now fires normally (with the engine genuinely not
+      running).
 - [ ] With a neutral/clutch interlock input configured and open/unsatisfied,
       confirm the starter button is inhibited.
 
@@ -154,6 +222,62 @@ Real radio — QEMU cannot validate any of this:
       revoke one, confirm the revoked one can no longer authenticate.
 - [ ] An unauthenticated write (if you can script one, or via the sim GUI's
       equivalent unauth test pattern) is rejected.
+
+### 7.1 Background reconnect (`src/ble/BoardSession.ts`)
+
+The point of this feature: walk up to the bike with a paired phone in your
+pocket, screen off, app not open, and have it connect and unlock on its
+own. Everything below has been typechecked, compiled, and unit-tested
+(`src/__tests__/BoardSession.test.ts`) but **never exercised against a real
+phone** — this is exactly the kind of thing that only proves itself across
+a genuine suspend/kill/relaunch cycle on real hardware, not in a simulator
+or an emulator.
+
+- [ ] **App open, board comes into range** — pair normally, background the
+      app (home button, don't force-quit), walk out of range and back in.
+      Reconnects and re-authenticates on its own (watch for
+      `BleWatchService`'s notification on Android; nothing user-visible to
+      check on iOS beyond the app showing Dashboard when reopened).
+- [ ] **App backgrounded (not killed), phone locked.** Same as above with
+      the screen off the whole time. iOS: this is the case
+      `bluetooth-central`/state restoration is *least* likely to have
+      trouble with (app process is merely suspended, not terminated).
+- [ ] **iOS: app fully terminated** (swiped away in the app switcher, not
+      just backgrounded), then walk into range. This is the real test of
+      `restoreStateIdentifier`/`restoreStateFunction`
+      (`src/ble/bleManager.ts`) — iOS has to relaunch the app in the
+      background for a BLE event with no user interaction at all. Confirm
+      the phone actually authenticates (check the board's event log or the
+      app, once reopened, for a fresh session) — don't take "nothing crashed"
+      as success.
+- [ ] **Android: app backgrounded, notification visible.** Confirm
+      `BleWatchService`'s notification appears (watching → connecting →
+      "Connected to `<name>`" as the state changes) and that swiping it away
+      doesn't kill the service (it's `setOngoing(true)` — it shouldn't be
+      dismissible while running at all; if it *can* be swiped away, that's a
+      bug to fix, not expected behavior).
+- [ ] **Android: app force-stopped from Settings, or killed by the OS under
+      memory pressure.** `START_STICKY` should get the service (and the
+      process) recreated, but confirm — this is a real edge Android permits
+      OEM battery-optimization features to break in ways this project can't
+      control for (see the manual "disable battery optimization for this
+      app" step some OEMs require, worth documenting in `docs/WIRING.md` or
+      `docs/FAQ.md` if you find your device needs it).
+- [ ] **Explicit Disconnect actually disconnects.** From Settings, tap
+      Disconnect, confirm the board drops (BLE disconnects, and on Android
+      `BleWatchService`'s notification disappears) and does **not**
+      silently reconnect on its own afterward — walk away and back into
+      range and confirm it stays disconnected until you reopen the app.
+- [ ] **Auth failure retry timing.** Revoke this phone's key from another
+      paired phone while this one is connected, confirm it gets kicked and
+      then retries reconnecting on a visibly slower cadence than a plain
+      out-of-range retry (30s vs 5s, `src/ble/BoardSession.ts`'s
+      `AUTH_ERROR_RETRY_MS`/`CONNECT_RETRY_MS`) rather than hammering the
+      radio.
+- [ ] **Multiple boards.** If you own more than one, confirm pairing a
+      second board (PairingScreen's manual tap flow) supersedes watching for
+      the first rather than trying to watch both — this project's phone-as-key
+      model is one phone, one board at a time, `saveLastDevice()` overwrites.
 
 ## 8. Immobilizer
 
@@ -231,9 +355,12 @@ With the immobilizer enabled and a cheat-code set:
       itself reported success — that would be a real firmware gap to fix,
       not a wiring or bench-procedure problem. Confirm which behavior you
       actually see and record it here.
-- [ ] Attempt an OTA update while `engine_running` is true (or battery
-      below the low-voltage cutoff) and confirm it's refused
-      (`docs/PROTOCOL.md` §10.3) rather than silently proceeding.
+- [ ] Attempt an OTA update while `engine_running` is true (enable
+      voltage-based detection for this check, per §4, or have the actual
+      engine running with ignition on — off-by-default detection alone
+      will not produce this state) or battery below the low-voltage
+      cutoff, and confirm it's refused (`docs/PROTOCOL.md` §10.3) rather
+      than silently proceeding.
 - [ ] Confirm the currently-running image keeps the bike fully operable
       (outputs, immobilizer) throughout an entire OTA transfer, right up
       until the explicit reboot step.
@@ -247,9 +374,15 @@ Only after everything above passes on the bench:
 - [ ] With the engine off, re-verify every output/input/immobilizer
       behavior from §§2, 5, 8 now that they're on real vehicle circuits,
       not bench loads.
-- [ ] Start the engine and confirm charging voltage is correctly detected
-      as `engine_running` (§4/§6) and the starter is inhibited while
-      running.
+- [ ] Decide, and record here, whether this board ships with voltage-based
+      `engine_running` detection on or off (default: off). If on: start
+      the engine and confirm charging voltage is correctly detected as
+      `engine_running` (§4/§6) and the starter is inhibited while running.
+      If off: confirm instead that turning the ignition off still
+      immediately inhibits the starter (the unconditional override, §6) —
+      this is the only automatic protection active with detection off, and
+      it depends entirely on an `is_ignition` channel actually being
+      assigned and wired.
 - [ ] A short stationary test (engine running, stand or center stand) for
       lighting/signal/brake-light behavior before an actual ride.
 - [ ] Re-run the safety-critical subset (lights, brake light, starter

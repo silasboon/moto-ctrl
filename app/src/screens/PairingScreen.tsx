@@ -5,6 +5,20 @@
  * Scanning starts on its own as soon as the screen appears, because with a
  * board on the bike there is exactly one thing a rider ever wants here.
  *
+ * A known device is deliberately NOT auto-connected from this screen's own
+ * scan results — src/ble/BoardSession.ts already does that, continuously,
+ * independent of whether this screen (or the app at all) is open, which is
+ * what lets phone-as-key reconnect and unlock without the app being open.
+ * This screen calls BoardSession.start() on mount so returning here after an
+ * explicit Disconnect resumes it, and its own scan/tap flow still exists for
+ * pairing a genuinely new board or forcing an impatient manual reconnect —
+ * both go through BoardSession.connectManually(), which shares its
+ * in-flight/dedup guard with the watcher, so a tap on the board the watcher
+ * is already mid-connecting-to joins that attempt rather than racing it.
+ * App.tsx is what actually notices a connection happened (it subscribes to
+ * BoardSession directly) and swaps this screen out — this screen never sees
+ * the result of its own connect attempt beyond an error to show.
+ *
  * The simulator transport is deliberately NOT offered here. SimTransport
  * still exists and is still required — the app's CI integration test drives
  * the real firmware/sim through it — but it is a development tool, not
@@ -21,12 +35,15 @@ import {
 } from 'react-native';
 
 import {
+  connectManually,
+  onStateChange as onBoardSessionStateChange,
+  start as startBoardSession,
+} from '../ble/BoardSession';
+import {
   loadLastDevice,
   loadOrCreateIdentity,
-  saveLastDevice,
   type Identity,
 } from '../identity/KeyStore';
-import { MotoClient } from '../protocol/MotoClient';
 import { BlePlxTransport } from '../transport/BlePlxTransport';
 import type { DeviceDescriptor } from '../transport/Transport';
 import {
@@ -51,16 +68,14 @@ type PairingStatus =
   | 'scanning'
   | 'connecting'
   | 'authenticating'
-  | 'enrolling'
   | 'error';
 
 interface Props {
-  onPaired: (client: MotoClient, device: DeviceDescriptor) => void;
   /** Shown once at the top — e.g. "the board disconnected" after a drop. */
   notice?: string | null;
 }
 
-export function PairingScreen({ onPaired, notice }: Props): React.JSX.Element {
+export function PairingScreen({ notice }: Props): React.JSX.Element {
   const [identity, setIdentity] = useState<Identity | null>(null);
   const [knownDeviceId, setKnownDeviceId] = useState<string | null>(null);
   const [found, setFound] = useState<DeviceDescriptor[]>([]);
@@ -71,19 +86,38 @@ export function PairingScreen({ onPaired, notice }: Props): React.JSX.Element {
 
   const stopScanRef = useRef<(() => void) | null>(null);
   const scanTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  /** Guards auto-connect so a re-render or a second advertisement can't start
-   * a second connect for the same board. */
+  /** Guards a tap so a re-render or a second tap can't start a second
+   * connect attempt for the same board. */
   const connectingRef = useRef(false);
 
-  const busy =
-    status === 'connecting' ||
-    status === 'authenticating' ||
-    status === 'enrolling';
+  const busy = status === 'connecting' || status === 'authenticating';
+
+  /* Mirrors BoardSession's own connecting/authenticating/error states, so
+   * this screen shows live status for BOTH a manual tap and the automatic
+   * background watcher — a known device failing to reconnect on its own is
+   * now visible here too, not just silent. A manual tap's own try/catch
+   * (below) still owns setting 'error' with a message tied to THIS
+   * attempt specifically; this only upgrades status while nothing is
+   * already reporting a more specific one from a direct tap. */
+  useEffect(() => {
+    return onBoardSessionStateChange(s => {
+      if (connectingRef.current) return; // a direct tap owns status/errorMsg for its own duration
+      if (s.type === 'connecting' || s.type === 'authenticating') {
+        setStatus(s.type);
+      } else if (s.type === 'error') {
+        setStatus('error');
+        setErrorMsg(s.message);
+      }
+    });
+  }, []);
 
   /** Android needs runtime grants for BLUETOOTH_SCAN/CONNECT (API 31+) or
-   * ACCESS_FINE_LOCATION below that, on top of the manifest entries. iOS has
-   * no equivalent call — the Info.plist usage string alone triggers its
-   * prompt on first CoreBluetooth use. */
+   * ACCESS_FINE_LOCATION below that, on top of the manifest entries, plus
+   * (API 33+) POST_NOTIFICATIONS for BleWatchService's background-reconnect
+   * notification to actually show — the service itself still runs and
+   * reconnects without it, the notification just silently won't appear. iOS
+   * has no equivalent call for any of this — the Info.plist usage strings
+   * alone trigger their prompts on first use. */
   const ensureBlePermissions = useCallback(async (): Promise<boolean> => {
     if (Platform.OS !== 'android') return true;
     const permissions =
@@ -93,6 +127,9 @@ export function PairingScreen({ onPaired, notice }: Props): React.JSX.Element {
             PermissionsAndroid.PERMISSIONS.BLUETOOTH_CONNECT,
           ]
         : [PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION];
+    if (Platform.Version >= 33) {
+      permissions.push(PermissionsAndroid.PERMISSIONS.POST_NOTIFICATIONS);
+    }
     const results = await PermissionsAndroid.requestMultiple(permissions);
     return permissions.every(
       p => results[p] === PermissionsAndroid.RESULTS.GRANTED,
@@ -115,43 +152,19 @@ export function PairingScreen({ onPaired, notice }: Props): React.JSX.Element {
       stopScan();
       setErrorMsg(null);
       setStatus('connecting');
-
-      const client = new MotoClient(new BlePlxTransport());
       try {
-        await client.connect(device.id);
-
-        setStatus('authenticating');
-        let auth = await client.authenticate(id.keypair);
-
-        if (!auth.ok) {
-          setStatus('enrolling');
-          const enrolled = await client.enroll(id.keypair.publicKey, id.label);
-          if (!enrolled.ok) {
-            throw new Error(
-              `This board already has paired phones (${enrolled.resultName}). ` +
-                'Ask a paired phone to add this one from its Paired Keys screen.',
-            );
-          }
-          setStatus('authenticating');
-          auth = await client.authenticate(id.keypair);
-          if (!auth.ok) {
-            throw new Error(
-              `Authentication failed after pairing (${auth.resultName}).`,
-            );
-          }
-        }
-
-        await saveLastDevice({ id: device.id, name: device.name });
-        onPaired(client, device);
+        await connectManually(device, id);
+        /* No further action here: BoardSession is now 'connected', and
+         * App.tsx (subscribed to BoardSession directly) is what notices
+         * that and swaps this screen out. */
       } catch (err) {
         setStatus('error');
         setErrorMsg(err instanceof Error ? err.message : String(err));
-        await client.disconnect().catch(() => {});
       } finally {
         connectingRef.current = false;
       }
     },
-    [onPaired, stopScan],
+    [stopScan],
   );
 
   const startScan = useCallback(async (): Promise<void> => {
@@ -206,9 +219,20 @@ export function PairingScreen({ onPaired, notice }: Props): React.JSX.Element {
     );
   }, [ensureBlePermissions, stopScan]);
 
-  /* Load identity, remember which board we last used, and start looking. */
+  /* Load identity, remember which board we last used, start looking, and
+   * (re)arm BoardSession's watcher — a no-op if it's already running (e.g.
+   * app boot already started it in index.js), but the thing that resumes it
+   * after a rider lands back here from an explicit Disconnect. The known
+   * device itself is never auto-connected from this screen's own scan
+   * results (see this file's header comment) — only BoardSession does
+   * that, and only for the remembered board specifically: auto-connecting
+   * to an unrecognised one would run trust-on-first-use enrollment
+   * (docs/PROTOCOL.md §6) and silently make this phone a key for someone
+   * else's bike parked nearby, so an unknown board always waits for a
+   * deliberate tap regardless of which path is connecting it. */
   useEffect(() => {
     let cancelled = false;
+    startBoardSession();
     void (async () => {
       const [id, last] = await Promise.all([
         loadOrCreateIdentity(),
@@ -226,19 +250,6 @@ export function PairingScreen({ onPaired, notice }: Props): React.JSX.Element {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  /* Reconnect to the board this phone already owns as soon as it appears.
-   *
-   * Deliberately ONLY the remembered board. Auto-connecting to an
-   * unrecognised one would run trust-on-first-use enrollment
-   * (docs/PROTOCOL.md §6) and silently make this phone a key for someone
-   * else's bike parked nearby — an unknown board always waits for a
-   * deliberate tap. */
-  useEffect(() => {
-    if (!identity || !knownDeviceId || connectingRef.current) return;
-    const match = found.find(d => d.id === knownDeviceId);
-    if (match) void connectAndPair(match, identity);
-  }, [found, identity, knownDeviceId, connectAndPair]);
-
   const looking = status === 'scanning' || status === 'waiting';
 
   const statusLine =
@@ -246,13 +257,11 @@ export function PairingScreen({ onPaired, notice }: Props): React.JSX.Element {
       ? 'Connecting…'
       : status === 'authenticating'
         ? 'Authenticating…'
-        : status === 'enrolling'
-          ? 'Pairing this phone…'
-          : status === 'waiting'
-            ? (waitingMsg ?? 'Waiting for Bluetooth…')
-            : status === 'scanning'
-              ? 'Looking for your board…'
-              : null;
+        : status === 'waiting'
+          ? (waitingMsg ?? 'Waiting for Bluetooth…')
+          : status === 'scanning'
+            ? 'Looking for your board…'
+            : null;
 
   return (
     <Screen

@@ -162,6 +162,12 @@ export class MotoClient {
     return this.transport.onConnectionStateChange(listener);
   }
 
+  /** Phone-side RSSI of the live connection — see Transport.readRssi. Null
+   * on transports that don't support it (the sim) or with nothing to read. */
+  async readRssi(): Promise<number | null> {
+    return (await this.transport.readRssi?.()) ?? null;
+  }
+
   getLastStatus(): Status | null {
     return this.status;
   }
@@ -790,12 +796,15 @@ export class MotoClient {
     const engineRunMv = readU16le(b, pos);
     pos += 2;
     const engineRunHysteresisMv = readU16le(b, pos);
+    pos += 2;
+    const engineRunVoltageDetectionEnabled = b[pos]! !== 0;
     return {
       channels,
       lvCutoffMv,
       lvCutoffHysteresisMv,
       engineRunMv,
       engineRunHysteresisMv,
+      engineRunVoltageDetectionEnabled,
     };
   }
 
@@ -804,7 +813,7 @@ export class MotoClient {
    * config (mc_config_t.diagnostics), so a full config export/import
    * captures these thresholds too. */
   async diagSetConfig(cfg: DiagConfig): Promise<ResultOutcome> {
-    const body = new Uint8Array(OUTPUT_COUNT * 4 + 8);
+    const body = new Uint8Array(OUTPUT_COUNT * 4 + 8 + 1);
     let pos = 0;
     for (let c = 0; c < OUTPUT_COUNT; c++) {
       body.set(u16le(cfg.channels[c]!.openLoadMa), pos);
@@ -819,6 +828,8 @@ export class MotoClient {
     body.set(u16le(cfg.engineRunMv), pos);
     pos += 2;
     body.set(u16le(cfg.engineRunHysteresisMv), pos);
+    pos += 2;
+    body[pos] = cfg.engineRunVoltageDetectionEnabled ? 1 : 0;
     const reply = await this.request(
       MC_CH.COMMAND,
       MC_OP.DIAG_SET_CONFIG,

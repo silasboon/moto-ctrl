@@ -16,6 +16,21 @@
 static const char *TAG = "mc_ble";
 
 static uint8_t s_own_addr_type;
+
+/* Advertising intervals, in BLE's 0.625ms units.
+ *
+ * FAST is spelled out at the values NimBLE was already defaulting to, so
+ * discovery behaves exactly as it did before mc_power existed. SLOW is what
+ * a parked bike advertises at: roughly a second between packets, which is
+ * the single biggest radio saving available while still keeping the board
+ * discoverable — phone-as-key stays live, it just takes a beat longer to
+ * be seen. Layered unlock is why this is slowed rather than stopped. */
+#define ADV_ITVL_FAST_MIN 48u   /* 30ms */
+#define ADV_ITVL_FAST_MAX 96u   /* 60ms */
+#define ADV_ITVL_SLOW_MIN 1600u /* 1000ms */
+#define ADV_ITVL_SLOW_MAX 1920u /* 1200ms */
+
+static bool s_adv_slow;
 /* The shared device state, kept so a rename can rebuild the advertisement
  * from the current config without the caller passing it back in. */
 static mc_app_t *s_app;
@@ -73,6 +88,8 @@ static void advertise(void)
     memset(&adv_params, 0, sizeof(adv_params));
     adv_params.conn_mode = BLE_GAP_CONN_MODE_UND;
     adv_params.disc_mode = BLE_GAP_DISC_MODE_GEN;
+    adv_params.itvl_min = s_adv_slow ? ADV_ITVL_SLOW_MIN : ADV_ITVL_FAST_MIN;
+    adv_params.itvl_max = s_adv_slow ? ADV_ITVL_SLOW_MAX : ADV_ITVL_FAST_MAX;
 
     rc = ble_gap_adv_start(s_own_addr_type, NULL, BLE_HS_FOREVER,
                            &adv_params, gap_event, NULL);
@@ -212,4 +229,18 @@ void ble_app_refresh_device_name(void)
     ble_gap_adv_stop();
     advertise();
     ESP_LOGI(TAG, "device name is now %s", name);
+}
+
+void ble_app_set_adv_interval(bool slow)
+{
+    if (s_app == NULL || slow == s_adv_slow) {
+        return;
+    }
+    s_adv_slow = slow;
+
+    /* Same restart dance as a rename, and the same harmless no-op while a
+     * phone is connected: there is no advertisement running to re-parametrise,
+     * and the next advertise() after disconnect picks the new interval up. */
+    ble_gap_adv_stop();
+    advertise();
 }

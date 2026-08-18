@@ -508,7 +508,7 @@ static void *ticker_thread(void *arg)
         /* Ticked first so mc_diag's mc_output_get_actual_state() calls this
          * same tick already see the current blink phase, and so
          * mc_lock sees this same tick's freshest engine_running
-         * (voltage-derived, starter protection) — mirrors firmware/main/main.c's
+         * (mc_diag, starter protection) — mirrors firmware/main/main.c's
          * app_task ordering. */
         momentary_tick();
         mc_output_tick(&g_output, t);

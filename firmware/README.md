@@ -15,7 +15,8 @@ contract.
     turn/brake flasher patterns — see below), `mc_input`
     (debounce, short/long/double press, chord + sequence combos),
     `mc_config` (versioned config blob + migration), `mc_persist`
-    (debounced-write scheduler for NVS wear).
+    (debounced-write scheduler for NVS wear), `mc_power` (parked/idle power
+    policy — decides tick rate, light sleep and advertising class).
   - `mc_crypto` (Ed25519 verify/sign + CSPRNG), `mc_keystore` (enrolled
     public keys), `mc_status` (status snapshot), `mc_config_json`
     (config ↔ JSON), `mc_session` (the transport-agnostic protocol + auth
@@ -31,7 +32,8 @@ contract.
   (`diag_hal` — DSEL/DEN mux sequencing, `hardware/PINOUT.md`), NVS stores
   (`nvs_config_hal`, `nvs_keystore_hal`,
   `nvs_lock_hal`, `nvs_calib_hal`), the physical factory-reset flow
-  (`factory_reset.c`, BOOT-hold), `watchdog`, and `ble/` — the NimBLE GATT
+  (`factory_reset.c`, BOOT-hold), `power_hal` (applies `mc_power`'s profile
+  via `esp_pm` locks), `watchdog`, and `ble/` — the NimBLE GATT
   server (`gatt_svr.c`), LE Secure Connections bonding + advertising
   (`ble_app.c`), and UUIDs (`ble_uuids.h`), all wiring the BLE transport to
   `mc_session`.
@@ -55,7 +57,8 @@ contract.
     firmware alike.
 - `partitions.csv` / `sdkconfig.defaults` — 4MB flash, OTA A/B partitions
   with rollback, NimBLE-only Bluetooth (bonds persisted to NVS), no PSRAM,
-  no WiFi.
+  no WiFi, and the power-management options `mc_power` depends on (DFS +
+  automatic light sleep, BLE controller modem sleep on the main crystal).
 
 ## Building the firmware (on-target)
 
@@ -137,8 +140,12 @@ The full feature set is implemented and tested:
 - **Diagnostics** (`mc_diag`, `docs/PROTOCOL.md` §12): round-robin
   per-channel current sensing over the shared PROFET IS line
   (`hardware/PINOUT.md`) with learnable open-load/overcurrent thresholds;
-  real voltage-derived `engine_running`, feeding the starter-protection and
-  lock parked-detection guards; a low-voltage battery cutoff that
+  `engine_running`, feeding the starter-protection and lock
+  parked-detection guards — an unconditional ignition-off override (an
+  assigned ignition channel that's off always means not-running) plus
+  opt-in, off-by-default voltage-based detection (never assumed, since a
+  booster pack looks identical to a running alternator); a low-voltage
+  battery cutoff that
   suppresses non-essential outputs (`CONTRIBUTING.md` safety requirement
   #7) while leaving commanded/intent state untouched; and board calibration
   in its own NVS blob, excluded from config export/import and from factory
@@ -184,6 +191,21 @@ over BLE from the app, and the bench checklist in
 through against real hardware. Re-run that checklist per release rather than
 treating it as settled — it is the only layer that covers real GPIO, real
 current sensing, and real BLE.
+
+**Parked power management** (`mc_power`, `power_hal`). The portable policy
+picks one of three levels from the live device state — ACTIVE (10ms tick, no
+sleep), IDLE (100ms, light sleep allowed), PARKED (250ms, light sleep, slow
+BLE advertising) — and `power_hal` applies it via `esp_pm` locks and the
+advertising interval. Light sleep rather than deep sleep is forced by the
+hardware: deep-sleep GPIO wake needs an RTC-capable pin and BTN1-8 are on
+GPIO35-42, outside the ESP32-S3's RTC domain (GPIO0-21). Light sleep also
+keeps the radio up, so phone-as-key stays live on a parked bike. Buttons
+wake the loop through a GPIO interrupt that notifies `app_task`, with the
+250ms parked tick as a backstop if that notify is ever missed. Every
+hold-awake gate (outputs driven, engine running, ignition live, OTA in
+flight, a gesture in progress, factory-reset window open) pins ACTIVE and
+refuses sleep — `test_power.c` covers each one. Not yet measured on a
+bench: `docs/HARDWARE_TESTING.md` §1 is where the number gets recorded.
 
 Two implementation notes worth knowing about:
 

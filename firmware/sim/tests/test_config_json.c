@@ -487,6 +487,32 @@ static void test_oversized_device_name_truncated(void)
 }
 
 
+/* schema_version 9: opt-in voltage-based engine_running detection
+ * (mc_diag.h). Absent from every earlier document, and false is exactly
+ * what those documents meant -- importing an old export must never
+ * silently turn detection on. */
+static void test_engine_run_voltage_detection_roundtrip_and_default(void)
+{
+    mc_config_t cfg;
+    mc_config_default(&cfg);
+    assert(cfg.diagnostics.engine_run_voltage_detection_enabled == false);
+
+    cfg.diagnostics.engine_run_voltage_detection_enabled = true;
+    char *json = mc_config_to_json(&cfg);
+    assert(json != NULL);
+
+    mc_config_t back;
+    assert(mc_config_from_json(json, strlen(json), &back) == MC_CONFIG_OK);
+    assert(back.diagnostics.engine_run_voltage_detection_enabled == true);
+    mc_config_json_free(json);
+
+    /* A pre-v9 document leaves it unset, which reads as off. */
+    const char *v8 = "{ \"schema_version\": 8, \"outputs\": { \"channels\": [] } }";
+    mc_config_t older;
+    assert(mc_config_from_json(v8, strlen(v8), &older) == MC_CONFIG_OK);
+    assert(older.diagnostics.engine_run_voltage_detection_enabled == false);
+}
+
 int main(void)
 {
     test_default_roundtrip();
@@ -510,5 +536,6 @@ int main(void)
     test_out_of_range_alternate_channel_is_dropped();
     test_device_name_roundtrip_and_default();
     test_oversized_device_name_truncated();
+    test_engine_run_voltage_detection_roundtrip_and_default();
     return 0;
 }

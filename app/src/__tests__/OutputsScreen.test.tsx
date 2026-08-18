@@ -54,7 +54,7 @@ async function mount(client: MotoClient) {
 }
 
 describe('OutputsScreen', () => {
-  test('writes the schema-8 channel shape, with no legacy keys', async () => {
+  test('writes the current channel shape, with no legacy keys', async () => {
     const { client, calls } = makeClient();
     const tree = await mount(client);
     await act(async () => {
@@ -62,7 +62,7 @@ describe('OutputsScreen', () => {
     });
 
     const written = calls.writes[0]!;
-    expect(written.schema_version).toBe(8);
+    expect(written.schema_version).toBe(9);
     const ch = written.outputs.channels[0]!;
     expect(ch).toMatchObject({
       name: '',

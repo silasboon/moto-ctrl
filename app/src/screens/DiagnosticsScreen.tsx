@@ -20,7 +20,7 @@
  * DashboardScreen/LockScreen/OutputsScreen already each follow.
  */
 import React, { useEffect, useState } from 'react';
-import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { StyleSheet, Switch, Text, TouchableOpacity, View } from 'react-native';
 
 import {
   DIAG_FAULT,
@@ -50,6 +50,7 @@ interface Props {
 }
 
 const DIAG_POLL_MS = 1500;
+const RSSI_POLL_MS = 1000;
 
 const FAULT_LABEL: Record<number, string> = {
   [DIAG_FAULT.NONE]: 'none',
@@ -57,12 +58,22 @@ const FAULT_LABEL: Record<number, string> = {
   [DIAG_FAULT.OVERCURRENT]: 'OVERCURRENT',
 };
 
+/** Rough, unscientific bucketing just to make a raw dBm number skimmable —
+ * not a threshold anything acts on. */
+function signalLabel(dbm: number): string {
+  if (dbm >= -60) return 'excellent';
+  if (dbm >= -70) return 'good';
+  if (dbm >= -80) return 'weak';
+  return 'very weak';
+}
+
 export function DiagnosticsScreen({
   client,
   onDone,
 }: Props): React.JSX.Element {
   const [diagConfig, setDiagConfig] = useState<DiagConfig>(defaultDiagConfig());
   const [live, setLive] = useState<Diagnostics | null>(null);
+  const [rssi, setRssi] = useState<number | null>(null);
   const [calib, setCalib] = useState<DiagCalib>(defaultDiagCalib());
   const [config, setConfig] = useState<DeviceConfig | null>(null);
   const [loading, setLoading] = useState(true);
@@ -112,6 +123,26 @@ export function DiagnosticsScreen({
     };
     poll();
     const timer = setInterval(poll, DIAG_POLL_MS);
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+    };
+  }, [client]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const poll = () => {
+      client
+        .readRssi()
+        .then(v => {
+          if (!cancelled) setRssi(v);
+        })
+        .catch(() => {
+          // Best-effort, same as the diagnostics poll above.
+        });
+    };
+    poll();
+    const timer = setInterval(poll, RSSI_POLL_MS);
     return () => {
       cancelled = true;
       clearInterval(timer);
@@ -210,6 +241,24 @@ export function DiagnosticsScreen({
 
   return (
     <Screen title="Diagnostics" onBack={back}>
+      <Text style={styles.sectionTitle}>Signal strength (BLE)</Text>
+      <View style={styles.row}>
+        <Text style={styles.rowLabel}>Phone ↔ board RSSI</Text>
+        <Text style={styles.readingText}>
+          {rssi === null ? '—' : `${rssi} dBm · ${signalLabel(rssi)}`}
+        </Text>
+      </View>
+      <Text style={styles.hint}>
+        Read live from this phone&apos;s own radio, once a second. With the
+        board mounted on the bike, walk to the edges of where you&apos;d want
+        it to unlock (garage, driveway, the next room) and watch this move.
+        RSSI is a noisy, rough stand-in for distance — your body, the
+        phone&apos;s position, and what&apos;s in between (a wall, a fuel
+        tank) can shift it by more than the distance itself does, so take a
+        few readings at each spot rather than trusting one. Nothing in the
+        unlock path reads this value today.
+      </Text>
+
       <Text style={styles.sectionTitle}>Battery / cutoff</Text>
       <View style={styles.row}>
         <Text style={styles.rowLabel}>Low-voltage cutoff (mV)</Text>
@@ -255,6 +304,31 @@ export function DiagnosticsScreen({
           }
         />
       </View>
+      <View style={styles.row}>
+        <Text style={styles.rowLabel}>Voltage-based engine detection</Text>
+        <Switch
+          value={diagConfig.engineRunVoltageDetectionEnabled}
+          onValueChange={v =>
+            setDiagConfig(prev => ({
+              ...prev,
+              engineRunVoltageDetectionEnabled: v,
+            }))
+          }
+          trackColor={{ false: colors.borderStrong, true: colors.on }}
+          thumbColor={colors.text}
+          ios_backgroundColor={colors.borderStrong}
+          accessibilityLabel={`Voltage-based engine detection, ${diagConfig.engineRunVoltageDetectionEnabled ? 'on' : 'off'}`}
+        />
+      </View>
+      <Text style={styles.hint}>
+        Off by default: a booster pack or bench PSU above the threshold
+        looks identical to a running alternator, so this board would
+        otherwise refuse the starter exactly when a jump-started bike needs
+        it most. Turn it on only if you want the threshold above to detect
+        the engine on its own. Whatever this is set to, an ignition channel
+        that&apos;s assigned and off always means the engine isn&apos;t
+        running — that check can&apos;t be turned off.
+      </Text>
       <Text style={styles.hint}>
         Below the cutoff (and only while the engine isn&apos;t detected
         running), non-essential outputs are suppressed automatically — ignition,

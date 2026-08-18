@@ -32,6 +32,38 @@ CONFIG_BT_NIMBLE_SM_SC=y
 # --- App rollback support (OTA) ---
 CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y
 
+# --- Parked power management (mc_power / power_hal) ---
+# Automatic light sleep, entered from the FreeRTOS tickless idle path
+# whenever every task is blocked long enough. mc_power decides *when* it is
+# allowed by holding/releasing an ESP_PM_NO_LIGHT_SLEEP lock; these options
+# are what make the mechanism exist at all.
+CONFIG_PM_ENABLE=y
+CONFIG_FREERTOS_USE_TICKLESS_IDLE=y
+# Keep sleep entry/exit code in IRAM. Without this every wake pays a flash
+# fault before it can run, which eats the saving at a 250ms parked tick.
+CONFIG_PM_SLP_IRAM_OPT=y
+CONFIG_PM_RTOS_IDLE_OPT=y
+
+# BLE controller modem sleep: the radio idles between advertising events
+# instead of holding the PHY up continuously. Mode 1 is the only supported
+# mode.
+CONFIG_BT_CTRL_MODEM_SLEEP=y
+CONFIG_BT_CTRL_MODEM_SLEEP_MODE_1=y
+# Main crystal as the controller's low-power clock. This is the only usable
+# choice on this board and it is forced by hardware, not preference:
+# BT_CTRL_LPCLK_SEL_EXT_32K_XTAL needs an external 32kHz crystal the design
+# does not have (RTC_CLK_SRC_INT_RC), and BT_CTRL_LPCLK_SEL_RTC_SLOW's
+# internal RC is far outside the 500ppm a BLE connection needs — it would
+# put phone-as-key on an unreliable link. Main XTAL is also the option that
+# explicitly supports running under DFS and light sleep together.
+CONFIG_BT_CTRL_LPCLK_SEL_MAIN_XTAL=y
+# Hold the main crystal up across light sleep. It costs current, and it is
+# the first thing to try turning off if bench numbers come in high — but
+# with the main XTAL serving as the BLE low-power clock, powering it down
+# mid-sleep is what would put connection timing at risk. Correctness first,
+# then measure.
+CONFIG_BT_CTRL_MAIN_XTAL_PU_DURING_LIGHT_SLEEP=y
+
 # CONFIG_BT_NIMBLE_HS_PVCY intentionally left at its Kconfig default (y).
 # It was disabled here as a diagnostic while bisecting `assert failed:
 # vTaskGenericNotifyGiveFromISR`. RESOLVED: that crash was never a NimBLE or

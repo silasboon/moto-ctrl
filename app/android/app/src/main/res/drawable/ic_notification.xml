@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Status-bar icon for the BLE watch/foreground-service notification
+     (BleWatchService). Deliberately a plain filled circle, not the app's
+     launcher art: the status bar renders this as a small solid-white
+     silhouette (Android re-tints whatever alpha shape is here), so a
+     detailed icon just reads as a smudge at 24dp, and a simple shape is
+     the only thing guaranteed to still look right. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24"
+    android:tint="#FFFFFF">
+  <path
+      android:fillColor="#FF000000"
+      android:pathData="M12,4 C7.58,4 4,7.58 4,12 C4,16.42 7.58,20 12,20 C16.42,20 20,16.42 20,12 C20,7.58 16.42,4 12,4 Z" />
+</vector>

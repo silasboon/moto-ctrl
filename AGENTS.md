@@ -66,9 +66,30 @@ specification and must not be edited, softened, or reinterpreted away:
    solid. Include a note in the app that flash patterns are not legal in all
    jurisdictions, default OFF.
 6. **Starter protection.** Starter output is not triggerable from the app
-   (hardware button path only), is inhibited while the engine-running state is
-   detected (voltage-based detection: charging voltage > threshold), and
-   supports an optional neutral/clutch interlock input assignment.
+   (hardware button path only), is inhibited while the engine-running state
+   is detected — an unconditional check that an assigned ignition channel
+   (if any) is live, plus an optional, off-by-default voltage-based
+   detection layer (charging voltage > threshold) — and supports an optional
+   neutral/clutch interlock input assignment.
+
+   *Amended 2026-08-17, by the project owner.* This previously read
+   "detected (voltage-based detection: charging voltage > threshold)" as the
+   sole, always-on mechanism. Two problems surfaced on the bench: voltage
+   alone cannot distinguish a running alternator from a booster pack or a
+   bench PSU holding the line above the threshold, so a rider jump-starting
+   a dead bike found the starter refused exactly when they needed it most;
+   and nothing forced `engine_running` back to false when the ignition was
+   switched off, so a booster left connected above threshold with the key
+   off could report "running" indefinitely. Voltage-based detection is now
+   an explicit opt-in — `engine_run_voltage_detection_enabled`, OFF by
+   default (`firmware/components/core/mc_diag.h`) — and a new, unconditional
+   override forces `engine_running` false whenever an assigned ignition
+   channel is off, regardless of that setting or any future detection method
+   (an input trigger is the likely next one). The invariant that matters —
+   the starter is never energized while the engine could plausibly be
+   running — is unchanged; what changed is that a booster pack no longer
+   trips a false positive, and ignition-off is now an absolute, non-optional
+   answer rather than one input among several.
 7. **Battery protection.** Parked mode: deep sleep or low-power BLE advertising,
    target <2mA average. Low-voltage cutoff (configurable, default 11.8V for
    LiFePO4) disables non-essential outputs and eventually sleeps hard. Never

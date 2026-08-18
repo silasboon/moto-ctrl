@@ -411,13 +411,15 @@ export class MotoClient {
     const lvCutoffHysteresisMv = dv.getUint16(pos, true); pos += 2;
     const engineRunMv = dv.getUint16(pos, true); pos += 2;
     const engineRunHysteresisMv = dv.getUint16(pos, true); pos += 2;
-    return { result, channels, lvCutoffMv, lvCutoffHysteresisMv, engineRunMv, engineRunHysteresisMv };
+    const engineRunVoltageDetectionEnabled = dv.getUint8(pos) !== 0; pos += 1;
+    return { result, channels, lvCutoffMv, lvCutoffHysteresisMv, engineRunMv, engineRunHysteresisMv, engineRunVoltageDetectionEnabled };
   }
 
   // cfg: { channels: [{openLoadMa, overcurrentMa}, ...12], lvCutoffMv,
-  //        lvCutoffHysteresisMv, engineRunMv, engineRunHysteresisMv }
+  //        lvCutoffHysteresisMv, engineRunMv, engineRunHysteresisMv,
+  //        engineRunVoltageDetectionEnabled }
   async diagSetConfig(cfg) {
-    const body = new Uint8Array(1 + 12 * 4 + 8);
+    const body = new Uint8Array(1 + 12 * 4 + 8 + 1);
     body[0] = OP.DIAG_SET_CONFIG;
     const dv = new DataView(body.buffer);
     let pos = 1;
@@ -429,6 +431,7 @@ export class MotoClient {
     dv.setUint16(pos, cfg.lvCutoffHysteresisMv, true); pos += 2;
     dv.setUint16(pos, cfg.engineRunMv, true); pos += 2;
     dv.setUint16(pos, cfg.engineRunHysteresisMv, true); pos += 2;
+    dv.setUint8(pos, cfg.engineRunVoltageDetectionEnabled ? 1 : 0); pos += 1;
     this._send(CH.COMMAND, body);
     const f = await this._await(CH.COMMAND, OP.COMMAND_RESULT);
     return { reqOpcode: f.payload[0], result: f.payload[1] };

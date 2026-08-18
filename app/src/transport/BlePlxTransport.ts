@@ -6,17 +6,17 @@
  * evidence that it still does — re-check it on hardware per release, using
  * docs/HARDWARE_TESTING.md.
  *
- * iOS CoreBluetooth state restoration (`restoreStateIdentifier`, so
- * phone-as-key reconnects from a locked phone) and Android's
- * foreground-service reconnect strategy are
- * NOT implemented here — that's background-reconnect hardening that's
- * actually load-bearing for the immobilizer (lock system). This transport
- * covers the foreground happy path: scan, connect, write, and be
- * notified — which is what the dashboard/config/pairing screens need.
+ * Background reconnect (iOS CoreBluetooth state restoration, Android's
+ * foreground-service keep-alive) is NOT this class's concern — that lives in
+ * src/ble/bleManager.ts (the shared, restoration-configured BleManager this
+ * class connects through) and src/ble/BoardSession.ts (the watch/retry state
+ * machine that decides *when* to call connect()). This transport is purely
+ * the mechanical scan/connect/write/notify layer either the interactive
+ * PairingScreen flow or BoardSession drives it through.
  */
 import {
   BleError,
-  BleManager,
+  type BleManager,
   type Characteristic,
   type Device,
   State,
@@ -36,6 +36,7 @@ import type {
   ScanStatus,
   Transport,
 } from './Transport';
+import { getBleManager } from '../ble/bleManager';
 
 const ALL_CHANNELS = [
   MC_CH.STATUS,
@@ -85,20 +86,6 @@ function isMotoCtrl(device: Device): boolean {
   return device.name === DEVICE_NAME || device.localName === DEVICE_NAME;
 }
 
-/* One native manager for the whole app.
- *
- * Each BleManager is a separate CBCentralManager/BluetoothAdapter client with
- * its own startup delay and its own view of which peripherals exist. Handing
- * scanning and connecting their own instances — which is what a `new
- * BlePlxTransport()` per screen action used to do — meant paying that startup
- * race twice and connecting through a manager that had never seen the device
- * the other one found. Shared, both happen against the same radio session.
- *
- * Still lazy: constructing it touches the native module immediately
- * (permissions/radio state on a device; no native module at all under Jest),
- * so it must not happen just because a module was imported. */
-let sharedManager: BleManager | null = null;
-
 export class BlePlxTransport implements Transport {
   private device: Device | null = null;
   private state: ConnectionState = 'disconnected';
@@ -109,10 +96,7 @@ export class BlePlxTransport implements Transport {
   private readonly monitors: Subscription[] = [];
 
   private get manager(): BleManager {
-    if (!sharedManager) {
-      sharedManager = new BleManager();
-    }
-    return sharedManager;
+    return getBleManager();
   }
 
   /**
@@ -266,6 +250,18 @@ export class BlePlxTransport implements Transport {
   onMessage(listener: (channel: number, data: Uint8Array) => void): () => void {
     this.messageListeners.add(listener);
     return () => this.messageListeners.delete(listener);
+  }
+
+  async readRssi(): Promise<number | null> {
+    if (!this.device) return null;
+    try {
+      const updated = await this.device.readRSSI();
+      return updated.rssi;
+    } catch {
+      // Peripheral disconnected mid-read, or the platform refused (e.g.
+      // backgrounded on iOS) — best-effort, same as a missed status poll.
+      return null;
+    }
   }
 
   private teardownMonitors(): void {

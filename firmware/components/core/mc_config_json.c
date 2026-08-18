@@ -273,6 +273,12 @@ char *mc_config_to_json(const mc_config_t *cfg)
     cJSON_AddNumberToObject(diag, "lv_cutoff_hysteresis_mv", cfg->diagnostics.lv_cutoff_hysteresis_mv);
     cJSON_AddNumberToObject(diag, "engine_run_mv", cfg->diagnostics.engine_run_mv);
     cJSON_AddNumberToObject(diag, "engine_run_hysteresis_mv", cfg->diagnostics.engine_run_hysteresis_mv);
+    /* schema_version 9. Absent in every earlier document, and the default
+     * (false, mc_diag.h) is the safe reading of "not mentioned" — an old
+     * export never asked for voltage-based detection, so importing it must
+     * not silently turn detection on. */
+    cJSON_AddBoolToObject(diag, "engine_run_voltage_detection_enabled",
+                          cfg->diagnostics.engine_run_voltage_detection_enabled);
 
     char *out = cJSON_PrintUnformatted(root);
     cJSON_Delete(root);
@@ -516,6 +522,13 @@ static mc_config_result_t parse_diagnostics(const cJSON *diag, mc_config_t *out)
     out->diagnostics.engine_run_mv = (uint16_t)get_uint(diag, "engine_run_mv", out->diagnostics.engine_run_mv);
     out->diagnostics.engine_run_hysteresis_mv =
         (uint16_t)get_uint(diag, "engine_run_hysteresis_mv", out->diagnostics.engine_run_hysteresis_mv);
+    /* schema_version 9. Absent in every earlier document; out->diagnostics
+     * already carries mc_config_default()'s false, which is the correct
+     * reading of "not mentioned" -- see the write side's comment. */
+    const cJSON *evd = cJSON_GetObjectItemCaseSensitive(diag, "engine_run_voltage_detection_enabled");
+    if (cJSON_IsBool(evd)) {
+        out->diagnostics.engine_run_voltage_detection_enabled = cJSON_IsTrue(evd);
+    }
     return MC_CONFIG_OK;
 }
 

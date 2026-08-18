@@ -11,6 +11,7 @@ idf_component_register(
         "mc_session.c"
         "mc_lock.c"
         "mc_diag.c"
+        "mc_power.c"
         "mc_ota.c"
         "mc_ota_release_key.c"
         "mc_event_log.c"

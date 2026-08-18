@@ -245,7 +245,7 @@ defaults; unknown `function` strings map to `"none"`.
 
 ```json
 {
-  "schema_version": 8,
+  "schema_version": 9,
   "device_name": "",
   "outputs": {
     "channels": [
@@ -280,7 +280,8 @@ defaults; unknown `function` strings map to `"none"`.
     "lv_cutoff_mv": 11800,
     "lv_cutoff_hysteresis_mv": 300,
     "engine_run_mv": 13800,
-    "engine_run_hysteresis_mv": 300
+    "engine_run_hysteresis_mv": 300,
+    "engine_run_voltage_detection_enabled": false
   }
 }
 ```
@@ -502,6 +503,10 @@ defaults; unknown `function` strings map to `"none"`.
   **Board calibration is deliberately not here** — it has its own dedicated
   ops (§12) and never rides a config export/import, since it describes one
   physical board's analog sense lines, not a portable setting.
+- `diagnostics.engine_run_voltage_detection_enabled` (`schema_version` 9,
+  default `false`) opts into voltage-based `engine_running` detection —
+  see §12.2. Absent from any pre-9 document, and `false` is exactly what
+  such a document meant.
 - `device_name` (`schema_version` 8) is the rider's name for the board — a
   nickname or bike model — up to 23 characters plus a NUL. **Empty means the
   factory default, `MOTO-CTRL`**, stored empty rather than as the literal so a
@@ -600,9 +605,9 @@ See §10.4 for how a release image and its signature are produced.
 ### 10.3 Safe-state gating
 
 `OTA_BEGIN` and `OTA_REBOOT` both additionally require
-`!engine_running && !lv_cutoff_active` (the same `engine_running` voltage
-detection as starter protection, §12.2, and the low-voltage cutoff, §12.2) —
-otherwise they return `REJECTED`. Flashing while riding or while the battery
+`!engine_running && !lv_cutoff_active` (the same `engine_running` signal as
+starter protection, §12.2, and the low-voltage cutoff, §12.2) — otherwise
+they return `REJECTED`. Flashing while riding or while the battery
 is critically low is refused. This is re-checked independently at
 `OTA_REBOOT` time (not just inherited from `OTA_BEGIN`): a `COMMITTED` image
 can sit safely in the inactive partition indefinitely, so nothing is lost if
@@ -910,10 +915,11 @@ by definition it works with no live session. See
 
 ## 12. Diagnostics channel (`2`, COMMAND) — authenticated
 
-Current-sense diagnostics, battery-derived `engine_running` (see
-`CONTRIBUTING.md` safety requirement #6) and low-voltage cutoff (safety
-requirement #7) live on the same COMMAND channel as `SET_OUTPUT` (§7) and
-the lock ops (§11). Same conventions as
+Current-sense diagnostics, `engine_running` (see §12.2 and
+`CONTRIBUTING.md` safety requirement #6 — an unconditional ignition-off
+override plus opt-in voltage-based detection, not battery-derived alone)
+and low-voltage cutoff (safety requirement #7) live on the same COMMAND
+channel as `SET_OUTPUT` (§7) and the lock ops (§11). Same conventions as
 §11: `COMMAND_RESULT` for simple ops, a dedicated response opcode where
 there's a payload — but every dedicated response here **leads with a
 `result:u8` byte** (unlike `LOCK_CONFIG`), so a device with diagnostics
@@ -958,14 +964,29 @@ The battery-sense ADC line is read every tick and calibrated the same way
 (§12.6). Two signals are derived from it, each with its own configurable
 threshold **and hysteresis band** (§9) to avoid chatter at the boundary:
 
-- **`engine_running`** (see `CONTRIBUTING.md` safety requirement #6): set
-  once the battery reading is at or above `engine_run_mv` (default 13.8V —
-  deliberately well above a fully-charged LiFePO4 pack's resting voltage,
-  so a healthy-but-idle battery is never mistaken for a running/charging
-  engine), cleared once it drops below `engine_run_mv -
-  engine_run_hysteresis_mv`. This drives the starter-protection guard
-  (§7's `SET_OUTPUT` rejection reasons) and the lock state machine's
-  parked-detection guard (§11.1).
+- **`engine_running`** (see `CONTRIBUTING.md` safety requirement #6): two
+  independent contributors, either of which can set it.
+  - **Voltage-based detection**, gated behind `engine_run_voltage_detection_enabled`
+    (**OFF by default**): while enabled, set once the battery reading is at
+    or above `engine_run_mv` (default 13.8V — deliberately well above a
+    fully-charged LiFePO4 pack's resting voltage, so a healthy-but-idle
+    battery is never mistaken for a running/charging engine), cleared once
+    it drops below `engine_run_mv - engine_run_hysteresis_mv`. Off by
+    default because voltage alone cannot distinguish a running alternator
+    from a booster pack or a bench PSU holding the line above threshold —
+    with detection on, jump-starting a dead bike would find the starter
+    refused (`MC_OUT_ERR_STARTER_ENGINE_RUNNING`) exactly when it's needed.
+  - **Ignition-off override**, unconditional and independent of the toggle
+    above: whenever an output channel is assigned `is_ignition` and it is
+    not currently on, `engine_running` is forced false, full stop — an
+    engine cannot run with its ignition off, regardless of what a booster
+    pack or bench PSU is doing to the battery line. No channel assigned
+    means no override; voltage detection (if enabled) then stands on its
+    own.
+
+  Either contributor drives the starter-protection guard (§7's `SET_OUTPUT`
+  rejection reasons) and the lock state machine's parked-detection guard
+  (§11.1).
 - **Low-voltage cutoff** (safety requirement #7): engages once the battery
   reading drops below `lv_cutoff_mv` (default 11.8V for LiFePO4) **and only
   while `!engine_running`** — a charging system holding voltage up must never be
@@ -1012,15 +1033,25 @@ sample.
 ([open_load_ma:u16le][overcurrent_ma:u16le]) × 12   (channels 0-11)
 [lv_cutoff_mv:u16le][lv_cutoff_hysteresis_mv:u16le]
 [engine_run_mv:u16le][engine_run_hysteresis_mv:u16le]
+[engine_run_voltage_detection_enabled:u8]
 ```
 
-57 bytes total. `DIAG_SET_CONFIG` sends the same shape **without** the
-leading `result` byte (56 bytes) → `COMMAND_RESULT`. `REJECTED` if any
-channel's `open_load_ma >= overcurrent_ma` (never classifiable as
-`OVERCURRENT` — not unsafe, just certainly a misconfiguration); config
-unchanged on rejection. On success, both the live engine and the persisted
-`mc_config_t.diagnostics` (§9) are updated — a config export/import
-round-trips these thresholds too.
+58 bytes total (the trailing byte added at the same time as
+`schema_version` 9's JSON field, §9). `DIAG_SET_CONFIG` sends the same
+shape **without** the leading `result` byte (57 bytes) → `COMMAND_RESULT`.
+`REJECTED` if any channel's `open_load_ma >= overcurrent_ma` (never
+classifiable as `OVERCURRENT` — not unsafe, just certainly a
+misconfiguration); config unchanged on rejection. On success, both the live
+engine and the persisted `mc_config_t.diagnostics` (§9) are updated — a
+config export/import round-trips these thresholds too.
+
+Unlike the JSON config, this is a fixed-shape binary payload with no
+tolerance for a missing trailing field: a client sending the pre-9
+57/56-byte shape will have its `DIAG_SET_CONFIG` rejected (`BAD_REQUEST`)
+rather than the new field silently defaulting, and firmware built before
+this field existed will not populate it in `DIAG_CONFIG` at all. There is
+no opcode/version negotiation on this channel — a client must be updated
+to match whichever firmware it's talking to.
 
 ### 12.5 `DIAG_LEARN`
 

@@ -275,7 +275,7 @@ test('config read/write round-trip over chunked JSON', async () => {
 
     const json = await client.configRead();
     const cfg = JSON.parse(json);
-    assert.equal(cfg.schema_version, 8);
+    assert.equal(cfg.schema_version, 9);
     assert.equal(cfg.outputs.channels.length, 12);
 
     /* v6: a channel is just a name plus a behaviour — no taxonomy to pick
@@ -557,14 +557,19 @@ test('diagnostics: config round-trip, and inverted thresholds are rejected', asy
     assert.equal(got.channels.length, 12);
     assert.equal(got.lvCutoffMv, 11800);
     assert.equal(got.engineRunMv, 13800);
+    // Off by default -- a booster pack or bench PSU above engineRunMv must
+    // not read as "engine running" unless the rider explicitly opts in.
+    assert.equal(got.engineRunVoltageDetectionEnabled, false);
 
     got.channels[3] = { openLoadMa: 200, overcurrentMa: 4000 };
     got.lvCutoffMv = 11900;
+    got.engineRunVoltageDetectionEnabled = true;
     assert.equal((await client.diagSetConfig(got)).result, RESULT.OK);
 
     const got2 = await client.diagGetConfig();
     assert.equal(got2.channels[3].openLoadMa, 200);
     assert.equal(got2.lvCutoffMv, 11900);
+    assert.equal(got2.engineRunVoltageDetectionEnabled, true);
 
     got2.channels[3] = { openLoadMa: 5000, overcurrentMa: 100 }; // inverted
     assert.equal((await client.diagSetConfig(got2)).result, RESULT.REJECTED);
@@ -878,6 +883,14 @@ test('OTA: begin is refused while engine_running, then succeeds once it clears',
   try {
     await enrolledAndAuthed(client);
     const image = new Uint8Array(2048).map((_, i) => i & 0xff);
+
+    // Voltage-based engine_running detection is off by default (a booster
+    // pack/bench PSU must not be read as "running" unless the rider opts
+    // in) -- enable it so the rest of this test can drive engine_running
+    // via battery voltage, same as it always could pre-toggle.
+    const diagCfg = await client.diagGetConfig();
+    diagCfg.engineRunVoltageDetectionEnabled = true;
+    assert.equal((await client.diagSetConfig(diagCfg)).result, RESULT.OK);
 
     // Above the default 13800mV engine-run threshold -- mc_diag reports
     // engine_running=true, and OTA_BEGIN's safe-to-flash gate (docs/

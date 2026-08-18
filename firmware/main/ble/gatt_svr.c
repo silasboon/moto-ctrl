@@ -55,6 +55,17 @@ void gatt_svr_on_connect(uint16_t conn_handle)
     ESP_LOGW(TAG, "no free session slot for conn %u", conn_handle);
 }
 
+uint8_t gatt_svr_connection_count(void)
+{
+    uint8_t n = 0;
+    for (int i = 0; i < MC_BLE_MAX_SESSIONS; i++) {
+        if (s_sessions[i].active) {
+            n++;
+        }
+    }
+    return n;
+}
+
 void gatt_svr_on_disconnect(uint16_t conn_handle)
 {
     for (int i = 0; i < MC_BLE_MAX_SESSIONS; i++) {

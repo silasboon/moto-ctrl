@@ -575,8 +575,58 @@ static void test_set_config_preserves_held_button_state(void)
     assert(mc_input_button_level(&eng, 5) == true);
 }
 
+/* mc_power's hold-awake gate. Idling the loop down mid-gesture would
+ * swallow it, and short presses are what feed the unlock cheat-code — so a
+ * rider entering a code on a parked bike could be locked out. Every
+ * in-flight stage must report activity, and it must clear once genuinely
+ * idle or the board would never park at all. */
+static void test_activity_pending_covers_every_in_flight_stage(void)
+{
+    mc_input_engine_t eng;
+    mc_input_config_t cfg;
+    mc_input_config_default(&cfg);
+    mc_input_init(&eng, &cfg);
+
+    bool raw[MC_INPUT_COUNT];
+    all_false(raw);
+
+    mc_input_poll(&eng, 0, raw);
+    assert(!mc_input_activity_pending(&eng));
+
+    /* Button down, not yet debounced. */
+    raw[0] = true;
+    mc_input_poll(&eng, 10, raw);
+    assert(mc_input_activity_pending(&eng));
+
+    /* Debounced and held. */
+    mc_input_poll(&eng, 10 + cfg.timing.debounce_ms + 1u, raw);
+    assert(mc_input_activity_pending(&eng));
+
+    /* Released, but inside the double-press gap — the gesture is still
+     * resolving, so this must not read as idle. */
+    all_false(raw);
+    uint32_t released_at = 10 + cfg.timing.debounce_ms + 20u;
+    mc_input_poll(&eng, released_at, raw);
+    mc_input_poll(&eng, released_at + cfg.timing.debounce_ms + 1u, raw);
+    assert(mc_input_activity_pending(&eng));
+
+    /* Gap elapsed: the short press is emitted and now sits in the queue,
+     * which is itself activity until something drains it. */
+    uint32_t settled = released_at + cfg.timing.debounce_ms + cfg.timing.double_press_gap_ms + 10u;
+    mc_input_poll(&eng, settled, raw);
+    assert(mc_input_activity_pending(&eng));
+
+    mc_input_event_t evt;
+    while (mc_input_pop_event(&eng, &evt)) {
+        /* drain */
+    }
+    mc_input_poll(&eng, settled + 10u, raw);
+    assert(!mc_input_activity_pending(&eng));
+}
+
 int main(void)
 {
+    test_activity_pending_covers_every_in_flight_stage();
     test_debounce_filters_bounce();
     test_short_press();
     test_long_press_fires_while_held();

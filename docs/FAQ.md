@@ -61,16 +61,19 @@ BLE. A physical device is required — BLE doesn't work on the iOS Simulator
 or a stock Android emulator. No NFC/UWB "digital car key" style integration
 is planned; phone-as-key here is BLE-proximity based.
 
-**Current limitation:** background reconnect is not implemented yet. iOS
-CoreBluetooth state restoration (`restoreStateIdentifier` plus the
-`bluetooth-central` background mode) and an Android foreground service that
-respects doze mode are the intended design, so that phone-as-key can
-reconnect with the phone locked in your pocket — but neither is wired up
-today. In practice that means phone-as-key auto-unlock needs the app open
-and in the foreground. This is exactly why the immobilizer refuses to be
-enabled unless you have also configured a non-phone unlock method (the
-button cheat-code or an ignition-switch input) — see the dead-phone
-question above.
+Phone-as-key reconnects and unlocks on its own, without the app open —
+you don't need to unlock your phone and open MOTO-CTRL to walk up and ride.
+iOS uses CoreBluetooth state restoration (`restoreStateIdentifier` plus the
+`bluetooth-central` background mode); Android runs a small foreground
+service (a persistent low-priority notification while it's watching for or
+connected to your board — that's expected, not a bug, and is what keeps
+Android from freezing the app in the background). Neither has been verified
+against real hardware yet — see `docs/HARDWARE_TESTING.md` §7's
+background-reconnect checks. Regardless of how well it works on your phone, the
+immobilizer still refuses to be enabled unless you've also configured a
+non-phone unlock method (the button cheat-code or an ignition-switch input)
+— see the dead-phone question above — so a background-reconnect bug can
+never be the only thing standing between you and your bike.
 
 ## Does the app need an internet connection or an account?
 
@@ -155,9 +158,16 @@ exception — update checking — runs on the phone, not the board).
 
 Because that's exactly the kind of thing that shouldn't be remotely
 triggerable — the starter output is only reachable from the physical
-handlebar button, is inhibited whenever the firmware detects the engine
-is already running (via charging voltage), and supports an optional
-neutral/clutch interlock.
+handlebar button, is inhibited whenever the firmware believes the engine
+is already running, and supports an optional neutral/clutch interlock.
+"Already running" is decided two ways: if you've assigned an ignition
+output, that channel being off always blocks the starter — no setup
+needed, since an engine can't run with its ignition off. Reading the
+charging voltage is a second, opt-in layer you can turn on in Diagnostics
+if you want the same protection while the engine is actually turning; it's
+off by default because a booster pack or jump box looks identical to a
+running alternator on that line, and refusing the starter on the bike
+you're trying to jump-start would defeat the point.
 
 ## I found a bug. Where do I report it?
 

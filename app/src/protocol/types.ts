@@ -212,6 +212,12 @@ export interface DiagnosticsJsonConfig {
   lv_cutoff_hysteresis_mv: number;
   engine_run_mv: number;
   engine_run_hysteresis_mv: number;
+  /** schema_version 9. Off by default — voltage alone can't tell a running
+   * alternator from a booster pack or bench PSU holding the line above
+   * engine_run_mv, so this is an explicit opt-in rather than an always-on
+   * heuristic. An assigned ignition channel being off always forces
+   * engine_running false regardless of this setting (mc_diag.h). */
+  engine_run_voltage_detection_enabled: boolean;
 }
 
 export interface DeviceConfig {
@@ -278,12 +284,13 @@ export function defaultDiagnosticsJsonConfig(): DiagnosticsJsonConfig {
     lv_cutoff_hysteresis_mv: 300,
     engine_run_mv: 13800,
     engine_run_hysteresis_mv: 300,
+    engine_run_voltage_detection_enabled: false,
   };
 }
 
 export function defaultConfig(): DeviceConfig {
   return {
-    schema_version: 8,
+    schema_version: 9,
     device_name: '',
     outputs: {
       channels: Array.from({ length: OUTPUT_COUNT }, defaultOutputChannel),
@@ -365,6 +372,9 @@ export interface DiagConfig {
   lvCutoffHysteresisMv: number;
   engineRunMv: number;
   engineRunHysteresisMv: number;
+  /** Off by default — see DiagnosticsJsonConfig's field of the same
+   * meaning for why. */
+  engineRunVoltageDetectionEnabled: boolean;
 }
 
 export function defaultDiagConfig(): DiagConfig {
@@ -377,6 +387,7 @@ export function defaultDiagConfig(): DiagConfig {
     lvCutoffHysteresisMv: 300,
     engineRunMv: 13800,
     engineRunHysteresisMv: 300,
+    engineRunVoltageDetectionEnabled: false,
   };
 }
 

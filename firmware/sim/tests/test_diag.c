@@ -251,6 +251,7 @@ static void test_engine_running_derivation_and_hysteresis(void)
     fx_init(&fx);
     fx.diag.config.engine_run_mv = 13800;
     fx.diag.config.engine_run_hysteresis_mv = 300;
+    fx.diag.config.engine_run_voltage_detection_enabled = true;
 
     fx.hal_ctx.vbat_raw_mv = 13200;
     mc_diag_tick(&fx.diag, &fx.output, 0);
@@ -267,6 +268,97 @@ static void test_engine_running_derivation_and_hysteresis(void)
     fx.hal_ctx.vbat_raw_mv = 13400; /* below 13800-300=13500: clears */
     mc_diag_tick(&fx.diag, &fx.output, 30);
     assert(fx.output.engine_running == false);
+}
+
+/* Voltage-based detection is OFF by default (mc_diag_config_default(),
+ * mc_diag.h) -- a booster pack or bench PSU sitting above engine_run_mv
+ * must not be read as "running" unless the rider has explicitly opted in.
+ * This is the exact bug report the toggle exists to fix. */
+static void test_engine_running_stays_false_when_detection_disabled(void)
+{
+    diag_fixture_t fx;
+    fx_init(&fx);
+    assert(fx.diag.config.engine_run_voltage_detection_enabled == false);
+    fx.diag.config.engine_run_mv = 13800;
+    fx.diag.config.engine_run_hysteresis_mv = 300;
+
+    fx.hal_ctx.vbat_raw_mv = 14200; /* comfortably above threshold */
+    mc_diag_tick(&fx.diag, &fx.output, 0);
+    assert(fx.output.engine_running == false);
+
+    mc_diag_tick(&fx.diag, &fx.output, 10);
+    assert(fx.output.engine_running == false);
+}
+
+/* Disabling detection mid-session (the rider turning it back off after a
+ * false positive) must clear an already-true reading on the very next
+ * tick, not just stop updating it. */
+static void test_disabling_detection_clears_a_stale_true_reading(void)
+{
+    diag_fixture_t fx;
+    fx_init(&fx);
+    fx.diag.config.engine_run_mv = 13800;
+    fx.diag.config.engine_run_hysteresis_mv = 300;
+    fx.diag.config.engine_run_voltage_detection_enabled = true;
+
+    fx.hal_ctx.vbat_raw_mv = 14200;
+    mc_diag_tick(&fx.diag, &fx.output, 0);
+    assert(fx.output.engine_running == true);
+
+    fx.diag.config.engine_run_voltage_detection_enabled = false;
+    mc_diag_tick(&fx.diag, &fx.output, 10); /* voltage still above threshold */
+    assert(fx.output.engine_running == false);
+}
+
+/* The ignition-off override: unconditional, and independent of the voltage
+ * toggle above. An assigned ignition channel that is off must force
+ * engine_running false even though voltage detection is enabled and the
+ * reading is above threshold -- this is what makes "ignition off" the
+ * absolute answer the user reported it should be, regardless of what a
+ * booster pack or a charging system is doing to the battery line. */
+static void test_ignition_off_overrides_voltage_detection(void)
+{
+    diag_fixture_t fx;
+    fx_init(&fx);
+    fx.diag.config.engine_run_mv = 13800;
+    fx.diag.config.engine_run_hysteresis_mv = 300;
+    fx.diag.config.engine_run_voltage_detection_enabled = true;
+    fx.output.config.channels[0].is_ignition = true;
+    fx.output.config.channels[0].essential = true;
+    /* ignition left off */
+
+    fx.hal_ctx.vbat_raw_mv = 14200; /* above threshold -- would engage without the gate */
+    mc_diag_tick(&fx.diag, &fx.output, 0);
+    assert(fx.output.engine_running == false);
+
+    /* Turning ignition on lets detection through again. */
+    assert(mc_output_set(&fx.output, 0, true, MC_OUT_SRC_LOCAL) == MC_OUT_OK);
+    mc_diag_tick(&fx.diag, &fx.output, 10);
+    assert(fx.output.engine_running == true);
+
+    /* And turning it back off drops engine_running immediately, no
+     * hysteresis -- physically the engine cannot be running with no
+     * ignition, so there is nothing to debounce. */
+    assert(mc_output_set(&fx.output, 0, false, MC_OUT_SRC_LOCAL) == MC_OUT_OK);
+    mc_diag_tick(&fx.diag, &fx.output, 20);
+    assert(fx.output.engine_running == false);
+}
+
+/* No ignition channel assigned at all: there is no ignition signal to gate
+ * on, so voltage detection (if enabled) stands entirely on its own -- the
+ * override must not punish a rider who hasn't wired/assigned one. */
+static void test_no_ignition_channel_assigned_leaves_voltage_detection_unblocked(void)
+{
+    diag_fixture_t fx;
+    fx_init(&fx);
+    assert(mc_output_find_ignition_channel(&fx.output.config) < 0);
+    fx.diag.config.engine_run_mv = 13800;
+    fx.diag.config.engine_run_hysteresis_mv = 300;
+    fx.diag.config.engine_run_voltage_detection_enabled = true;
+
+    fx.hal_ctx.vbat_raw_mv = 14200;
+    mc_diag_tick(&fx.diag, &fx.output, 0);
+    assert(fx.output.engine_running == true);
 }
 
 /* --- low-voltage cutoff --- */
@@ -307,6 +399,7 @@ static void test_lv_cutoff_gated_on_not_running(void)
      * arise -- see mc_diag.h's default comments). */
     fx.diag.config.engine_run_mv = 5000;
     fx.diag.config.engine_run_hysteresis_mv = 100;
+    fx.diag.config.engine_run_voltage_detection_enabled = true;
     fx.diag.config.lv_cutoff_mv = 20000;
     fx.diag.config.lv_cutoff_hysteresis_mv = 100;
 
@@ -528,7 +621,7 @@ static void test_wire_diag_config_round_trip(void)
     recorder_t rec = {0};
     dsfx_auth(&fx, &s, &rec);
 
-    uint8_t body[MC_OUTPUT_COUNT * 4 + 8];
+    uint8_t body[MC_OUTPUT_COUNT * 4 + 8 + 1];
     size_t pos = 0;
     for (int ch = 0; ch < MC_OUTPUT_COUNT; ch++) {
         mc_put_u16le(&body[pos], 111); pos += 2;
@@ -538,6 +631,7 @@ static void test_wire_diag_config_round_trip(void)
     mc_put_u16le(&body[pos], 250); pos += 2;
     mc_put_u16le(&body[pos], 14000); pos += 2;
     mc_put_u16le(&body[pos], 400); pos += 2;
+    body[pos] = 1; pos += 1; /* engine_run_voltage_detection_enabled */
     assert(pos == sizeof(body));
 
     uint8_t cmd[1 + sizeof(body)];
@@ -549,7 +643,9 @@ static void test_wire_diag_config_round_trip(void)
     assert(r != NULL && r->data[1] == MC_OP_DIAG_SET_CONFIG && r->data[2] == MC_RESULT_OK);
     assert(fx.persist_config_calls == 1);
     assert(fx.diag.config.lv_cutoff_mv == 11900);
+    assert(fx.diag.config.engine_run_voltage_detection_enabled == true);
     assert(fx.config.diagnostics.lv_cutoff_mv == 11900); /* persisted copy synced */
+    assert(fx.config.diagnostics.engine_run_voltage_detection_enabled == true);
 
     rec_reset(&rec);
     uint8_t getop = MC_OP_DIAG_GET_CONFIG;
@@ -557,6 +653,16 @@ static void test_wire_diag_config_round_trip(void)
     const rec_frame_t *cr = last_frame(&rec, MC_CH_COMMAND, MC_OP_DIAG_CONFIG);
     assert(cr != NULL && cr->data[1] == MC_RESULT_OK);
     assert(mc_get_u16le(&cr->data[2]) == 111);
+    assert(cr->data[1 + MC_OUTPUT_COUNT * 4 + 8] == 1); /* trailing byte round-trips */
+
+    /* toggling it back off round-trips too -- not just "any nonzero byte". */
+    body[pos - 1] = 0;
+    memcpy(cmd + 1, body, sizeof(body));
+    rec_reset(&rec);
+    mc_session_handle(&s, &fx.app, MC_CH_COMMAND, cmd, sizeof(cmd), rec_send, &rec);
+    r = last_frame(&rec, MC_CH_COMMAND, MC_OP_COMMAND_RESULT);
+    assert(r != NULL && r->data[2] == MC_RESULT_OK);
+    assert(fx.diag.config.engine_run_voltage_detection_enabled == false);
 
     /* reject inverted thresholds (open_load >= overcurrent) */
     mc_put_u16le(&body[0], 0xFFFF);
@@ -567,9 +673,12 @@ static void test_wire_diag_config_round_trip(void)
     r = last_frame(&rec, MC_CH_COMMAND, MC_OP_COMMAND_RESULT);
     assert(r != NULL && r->data[2] == MC_RESULT_REJECTED);
 
-    /* short body: bad request */
+    /* short body (one byte shorter than the new full shape): bad request --
+     * regression guard for the trailing byte actually being required, not
+     * silently optional. */
     rec_reset(&rec);
-    uint8_t short_cmd[3] = { MC_OP_DIAG_SET_CONFIG, 0, 0 };
+    uint8_t short_cmd[sizeof(cmd) - 1];
+    memcpy(short_cmd, cmd, sizeof(short_cmd));
     mc_session_handle(&s, &fx.app, MC_CH_COMMAND, short_cmd, sizeof(short_cmd), rec_send, &rec);
     r = last_frame(&rec, MC_CH_COMMAND, MC_OP_COMMAND_RESULT);
     assert(r != NULL && r->data[2] == MC_RESULT_BAD_REQUEST);
@@ -738,6 +847,10 @@ int main(void)
     test_flash_turn_off_phase_never_faulted();
     test_learn_sets_open_load_from_measured_draw();
     test_engine_running_derivation_and_hysteresis();
+    test_engine_running_stays_false_when_detection_disabled();
+    test_disabling_detection_clears_a_stale_true_reading();
+    test_ignition_off_overrides_voltage_detection();
+    test_no_ignition_channel_assigned_leaves_voltage_detection_unblocked();
     test_lv_cutoff_engages_and_recovers_with_hysteresis();
     test_lv_cutoff_gated_on_not_running();
     test_zero_battery_reading_does_not_trigger_cutoff();

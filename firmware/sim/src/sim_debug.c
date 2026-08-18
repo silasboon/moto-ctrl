@@ -305,9 +305,18 @@ void sim_debug_handle(sim_debug_ctx_t *ctx, const uint8_t *payload, size_t len)
          * here would just be overwritten by the next tick. Nudge the
          * injected battery voltage instead, comfortably on the requested
          * side of the configured threshold (with its hysteresis), so the
-         * real derivation lands where asked. */
+         * real derivation lands where asked.
+         *
+         * Voltage detection is off by default (mc_diag.h) -- force it on
+         * here so this debug convenience keeps working without a separate
+         * DIAG_SET_CONFIG round trip first. This does NOT bypass the
+         * ignition-off override: if an ignition channel is assigned and
+         * off, engine_running stays false regardless of the voltage nudged
+         * here, same as it would on a real device. That is the derivation
+         * "landing for real," not a bug in this debug op. */
         if (blen >= 1 && ctx->diag != NULL) {
             bool want_running = body[0] != 0;
+            ctx->diag->config.engine_run_voltage_detection_enabled = true;
             uint16_t threshold = ctx->diag->config.engine_run_mv;
             uint16_t margin = (uint16_t)(ctx->diag->config.engine_run_hysteresis_mv + 200u);
             ctx->battery_mv = want_running ? (uint16_t)(threshold + margin)

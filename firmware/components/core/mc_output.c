@@ -499,6 +499,17 @@ void mc_output_set_lv_cutoff(mc_output_engine_t *eng, bool cutoff_active)
     }
 }
 
+bool mc_output_any_active(const mc_output_engine_t *eng, uint32_t now_ms)
+{
+    for (uint8_t ch = 0; ch < MC_OUTPUT_COUNT; ch++) {
+        if (eng->config.channels[ch].commanded_on ||
+            mc_output_get_actual_state(eng, ch, now_ms)) {
+            return true;
+        }
+    }
+    return false;
+}
+
 int mc_output_find_brake_channel(const mc_output_config_t *config)
 {
     for (int i = 0; i < MC_OUTPUT_COUNT; i++) {

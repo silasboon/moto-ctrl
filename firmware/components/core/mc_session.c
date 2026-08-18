@@ -525,7 +525,7 @@ static void handle_command(mc_session_t *s, mc_app_t *app,
         break;
     }
     case MC_OP_DIAG_GET_CONFIG: {
-        uint8_t resp[1 + MC_OUTPUT_COUNT * 4 + 8];
+        uint8_t resp[1 + MC_OUTPUT_COUNT * 4 + 8 + 1];
         memset(resp, 0, sizeof(resp));
         if (app->diag == NULL) {
             resp[0] = MC_RESULT_REJECTED;
@@ -544,6 +544,7 @@ static void handle_command(mc_session_t *s, mc_app_t *app,
         mc_put_u16le(&resp[pos], app->diag->config.lv_cutoff_hysteresis_mv); pos += 2;
         mc_put_u16le(&resp[pos], app->diag->config.engine_run_mv); pos += 2;
         mc_put_u16le(&resp[pos], app->diag->config.engine_run_hysteresis_mv); pos += 2;
+        resp[pos] = app->diag->config.engine_run_voltage_detection_enabled ? 1 : 0;
         send_frame(send, io, MC_CH_COMMAND, MC_OP_DIAG_CONFIG, resp, sizeof(resp));
         break;
     }
@@ -552,7 +553,7 @@ static void handle_command(mc_session_t *s, mc_app_t *app,
             send_result2(send, io, MC_CH_COMMAND, MC_OP_COMMAND_RESULT, op, MC_RESULT_REJECTED);
             return;
         }
-        size_t needed = (size_t)MC_OUTPUT_COUNT * 4 + 8;
+        size_t needed = (size_t)MC_OUTPUT_COUNT * 4 + 8 + 1;
         if (body_len < needed) {
             send_result2(send, io, MC_CH_COMMAND, MC_OP_COMMAND_RESULT, op, MC_RESULT_BAD_REQUEST);
             return;
@@ -567,6 +568,7 @@ static void handle_command(mc_session_t *s, mc_app_t *app,
         cfg.lv_cutoff_hysteresis_mv = mc_get_u16le(&body[pos]); pos += 2;
         cfg.engine_run_mv = mc_get_u16le(&body[pos]); pos += 2;
         cfg.engine_run_hysteresis_mv = mc_get_u16le(&body[pos]); pos += 2;
+        cfg.engine_run_voltage_detection_enabled = body[pos] != 0; pos += 1;
 
         if (mc_diag_config_validate(&cfg) != MC_DIAG_CFG_OK) {
             send_result2(send, io, MC_CH_COMMAND, MC_OP_COMMAND_RESULT, op, MC_RESULT_REJECTED);

@@ -1,3 +1,8 @@
 <resources>
     <string name="app_name">MOTO-CTRL</string>
+
+    <!-- BleWatchService's persistent notification (background reconnect). -->
+    <string name="ble_watch_channel_name">Board connection</string>
+    <string name="ble_watch_channel_description">Shows whether MOTO-CTRL is watching for or connected to your board</string>
+    <string name="ble_watch_default_label">Watching for your board…</string>
 </resources>

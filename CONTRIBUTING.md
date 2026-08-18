@@ -56,8 +56,14 @@ implementing it:
    (flash patterns aren't legal in every jurisdiction).
 6. **Starter protection.** The starter output is not triggerable from the
    app — hardware button only — is inhibited while the engine is already
-   running (voltage-based detection), and supports an optional
-   neutral/clutch interlock input.
+   running, and supports an optional neutral/clutch interlock input.
+   "Running" is decided two ways: an unconditional check that an assigned
+   ignition channel (if any) is currently on — this cannot be turned off,
+   since an engine cannot run with its ignition off — plus an optional,
+   off-by-default voltage-based detection layer a rider can enable in
+   Diagnostics. Voltage detection is opt-in because it can't tell a running
+   alternator from a booster pack or a bench PSU holding the charging line
+   up, which would otherwise refuse the starter on a jump-started bike.
 7. **Battery protection.** A low-voltage cutoff (configurable, default
    11.8V for LiFePO4) disables non-essential outputs and eventually sleeps
    the board, but never disables the unlock path.

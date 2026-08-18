@@ -62,4 +62,13 @@ export interface Transport {
   send(channel: number, data: Uint8Array): Promise<void>;
   /** Subscribe to opcode+payload frames arriving on any channel. */
   onMessage(listener: (channel: number, data: Uint8Array) => void): () => void;
+
+  /** Phone-side RSSI of the live connection (dBm, more negative = weaker),
+   * read fresh from the radio — distinct from Status.rssiDbm, which is a
+   * board-side reading over the wire protocol. Optional because it's a
+   * BLE-only concept with no equivalent on the sim transport; resolves null
+   * there, and whenever there's no live connection to read. Used only for
+   * on-bench signal-strength diagnostics today — nothing in the unlock path
+   * reads this. */
+  readRssi?(): Promise<number | null>;
 }

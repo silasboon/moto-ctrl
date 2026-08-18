@@ -53,7 +53,10 @@ typedef enum {
  * tick). Instead it nudges the injected battery voltage to a value that
  * makes the real derivation land on the requested state, so the op stays
  * meaningful without a second, competing "engine_running" concept — see
- * sim_debug.c. */
+ * sim_debug.c. Voltage-based detection is off by default (mc_diag.h); this
+ * op force-enables it so it keeps working standalone, but does NOT bypass
+ * the unconditional ignition-off override -- an assigned, off ignition
+ * channel still wins. */
 #define SIM_OP_SET_ENGINE_RUNNING 0x03
 #define SIM_OP_SET_INTERLOCK 0x04      /* [engaged:1] */
 #define SIM_OP_BUTTON_STATE 0x05       /* [button:1][pressed:1] */

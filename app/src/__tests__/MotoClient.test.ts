@@ -87,6 +87,12 @@ class ScriptedTransport implements Transport {
     return () => this.messageListeners.delete(listener);
   }
 
+  rssiValue: number | null = null;
+
+  async readRssi(): Promise<number | null> {
+    return this.rssiValue;
+  }
+
   /** Simulates the link dropping without disconnect() being called — a board
    * going out of range or losing power. */
   dropConnection(): void {
@@ -756,7 +762,7 @@ describe('MotoClient', () => {
         channel === MC_CH.COMMAND &&
         opcode === MC_OP.DIAG_GET_CONFIG
       ) {
-        const resp = new Uint8Array(1 + OUTPUT_COUNT * 4 + 8);
+        const resp = new Uint8Array(1 + OUTPUT_COUNT * 4 + 8 + 1);
         resp[0] = MC_RESULT.OK;
         let pos = 1;
         for (let c = 0; c < OUTPUT_COUNT; c++) {
@@ -772,16 +778,20 @@ describe('MotoClient', () => {
         resp.set(u16le(13800), pos);
         pos += 2;
         resp.set(u16le(300), pos);
+        pos += 2;
+        resp[pos] = 1; // engineRunVoltageDetectionEnabled
         emit(frame(MC_OP.DIAG_CONFIG, resp));
       } else if (
         channel === MC_CH.COMMAND &&
         opcode === MC_OP.DIAG_SET_CONFIG
       ) {
-        expect(body.length).toBe(OUTPUT_COUNT * 4 + 8);
+        expect(body.length).toBe(OUTPUT_COUNT * 4 + 8 + 1);
         // First channel's open_load_ma/overcurrent_ma, and the trailing cutoff word.
         expect(Array.from(body.subarray(0, 4))).toEqual([
           0x64, 0x00, 0x88, 0x13,
         ]); // 100, 5000
+        // Trailing byte: defaultDiagConfig()'s engineRunVoltageDetectionEnabled is off.
+        expect(body[body.length - 1]).toBe(0);
         emit(
           frame(
             MC_OP.COMMAND_RESULT,
@@ -801,6 +811,7 @@ describe('MotoClient', () => {
     expect(cfg.lvCutoffHysteresisMv).toBe(300);
     expect(cfg.engineRunMv).toBe(13800);
     expect(cfg.engineRunHysteresisMv).toBe(300);
+    expect(cfg.engineRunVoltageDetectionEnabled).toBe(true);
 
     const edited = defaultDiagConfig();
     edited.channels[0] = { openLoadMa: 100, overcurrentMa: 5000 };
@@ -1146,5 +1157,27 @@ describe('MotoClient', () => {
 
     const records = await client.getEventLog();
     expect(records).toEqual([]);
+  });
+
+  test('readRssi passes through the transport reading, or null if unsupported', async () => {
+    const transport = new ScriptedTransport();
+    transport.responder = (channel, opcode, _body, emit) => {
+      if (channel === MC_CH.STATUS && opcode === MC_OP.STATUS_GET) {
+        emit(frame(MC_OP.STATUS, statusBytes()));
+      }
+    };
+    const client = new MotoClient(transport);
+    activeClients.push(client);
+    await client.connect('fake');
+
+    transport.rssiValue = -62;
+    await expect(client.readRssi()).resolves.toBe(-62);
+
+    const original = transport.readRssi;
+    // @ts-expect-error simulating a transport (like SimTransport) that
+    // doesn't implement the optional method at all.
+    transport.readRssi = undefined;
+    await expect(client.readRssi()).resolves.toBeNull();
+    transport.readRssi = original;
   });
 });

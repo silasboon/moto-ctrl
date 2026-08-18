@@ -323,6 +323,9 @@ d('MotoClient against a real firmware/sim instance', () => {
       expect(cfg.channels[0]).toEqual({ openLoadMa: 50, overcurrentMa: 15000 });
       expect(cfg.lvCutoffMv).toBe(11800);
       expect(cfg.engineRunMv).toBe(13800);
+      // Off by default -- a booster pack/bench PSU above the threshold must
+      // not read as "engine running" unless explicitly opted into.
+      expect(cfg.engineRunVoltageDetectionEnabled).toBe(false);
     });
 
     test('diagSetConfig round-trips edited thresholds, and rejects inverted ones', async () => {

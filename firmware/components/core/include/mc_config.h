@@ -33,7 +33,7 @@
 #include "mc_input.h"
 #include "mc_output.h"
 
-#define MC_CONFIG_SCHEMA_VERSION 8
+#define MC_CONFIG_SCHEMA_VERSION 9
 
 typedef struct {
     uint16_t schema_version;
@@ -44,7 +44,9 @@ typedef struct {
     char device_name[MC_DEVICE_NAME_MAX];
     mc_output_config_t outputs;
     mc_input_config_t inputs;
-    mc_diag_config_t diagnostics; /* added at schema_version 2 */
+    /* added at schema_version 2; diagnostics.engine_run_voltage_detection_enabled
+     * added at schema_version 9 (mc_diag.h) */
+    mc_diag_config_t diagnostics;
 } mc_config_t;
 
 /* The name to advertise: the rider's, or MC_DEVICE_NAME_DEFAULT if unset.

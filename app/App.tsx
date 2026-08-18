@@ -21,7 +21,7 @@
  * drives (edge-swipe) is routed through NavGuard — the mounted screen's
  * `useLeaveGuard` gets to confirm first, exactly as its own chevron does.
  */
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { StatusBar, StyleSheet, View } from 'react-native';
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 
@@ -29,6 +29,12 @@ import { colors } from './src/ui/theme';
 import { EdgeSwipeBack } from './src/ui/EdgeSwipeBack';
 import { NavGuardProvider, useNavGuard } from './src/ui/NavGuard';
 
+import {
+  getState as getBoardState,
+  onStateChange as onBoardStateChange,
+  stop as stopBoardSession,
+  type BoardSessionState,
+} from './src/ble/BoardSession';
 import { BoardInfoCard } from './src/screens/BoardInfoCard';
 import { BoardScreen } from './src/screens/BoardScreen';
 import { ButtonsScreen } from './src/screens/ButtonsScreen';
@@ -41,8 +47,6 @@ import { LockScreen } from './src/screens/LockScreen';
 import { PairingScreen } from './src/screens/PairingScreen';
 import { OutputsScreen } from './src/screens/OutputsScreen';
 import { SettingsScreen } from './src/screens/SettingsScreen';
-import type { MotoClient } from './src/protocol/MotoClient';
-import type { DeviceDescriptor } from './src/transport/Transport';
 
 type Detail =
   | 'board'
@@ -54,74 +58,70 @@ type Detail =
   | 'firmwareUpdate'
   | 'eventLog';
 
-interface Session {
-  client: MotoClient;
-  device: DeviceDescriptor;
-}
-
 function AppContent(): React.JSX.Element {
   const nav = useNavGuard();
-  const [session, setSession] = useState<Session | null>(null);
+  /* BoardSession (src/ble/BoardSession.ts) is the single source of truth
+   * for "are we connected" — it keeps running whether or not this
+   * component is even mounted (background reconnect is the whole point),
+   * so this is a subscription to shared state, not state this component
+   * owns. getBoardState() as the initial value (rather than 'idle') is
+   * what lets a session already established before first render —
+   * restored from an iOS background relaunch, or the watcher having beaten
+   * this render to a connection — show up immediately instead of flashing
+   * PairingScreen first. */
+  const [boardState, setBoardState] = useState<BoardSessionState>(getBoardState);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [detail, setDetail] = useState<Detail | null>(null);
   /* Surfaced on the pairing screen after an unexpected drop, so a board going
    * out of range reads as a plain message rather than whatever error the
-   * in-flight request happened to reject with. */
+   * in-flight request happened to reject with. Derived from a 'connected' ->
+   * 'watching' (reason 'lost') transition below, using the device name from
+   * the state we're leaving, since the new one no longer carries it. */
   const [notice, setNotice] = useState<string | null>(null);
+  const lastDeviceNameRef = useRef<string | null>(null);
 
-  const handlePaired = useCallback(
-    (client: MotoClient, device: DeviceDescriptor) => {
-      setNotice(null);
-      setSession({ client, device });
-      setSettingsOpen(false);
-      setDetail(null);
-    },
-    [],
-  );
-
-  const handleDisconnect = useCallback(() => {
-    if (!session) return;
-    setNotice(null);
-    session.client.disconnect().finally(() => setSession(null));
-  }, [session]);
-
-  /* An unexpected drop — out of range, board powered down, BLE turned off.
-   * Tear the session down and go back to pairing, which immediately starts
-   * scanning and reconnects on its own once the board is back. */
   useEffect(() => {
-    if (!session) return undefined;
-    const unsub = session.client.onConnectionStateChange(state => {
-      if (state === 'disconnected') {
+    return onBoardStateChange(next => {
+      if (next.type === 'connected') {
+        setNotice(null);
+        lastDeviceNameRef.current = next.device.name;
+        setSettingsOpen(false);
+        setDetail(null);
+      } else if (next.type === 'watching' && next.reason === 'lost') {
+        const name = lastDeviceNameRef.current;
         setNotice(
-          `Lost connection to ${session.device.name}. Searching for it again…`,
+          name
+            ? `Lost connection to ${name}. Searching for it again…`
+            : 'Lost connection. Searching for it again…',
         );
-        setSession(null);
         setSettingsOpen(false);
         setDetail(null);
       }
+      setBoardState(next);
     });
-    return unsub;
-  }, [session]);
+  }, []);
 
   // Ownership transfer wipes every enrolled key (including this phone's) and
   // resets lock config device-side — treat it like a disconnect back to
   // Pairing. If this is the same phone, PairingScreen's existing
   // authenticate-then-fall-back-to-enroll flow re-enrolls it via
   // trust-on-first-use, since the keystore is now empty.
-  const handleOwnershipTransferred = useCallback(() => {
-    handleDisconnect();
-  }, [handleDisconnect]);
+  const handleDisconnect = useCallback(() => {
+    setNotice(null);
+    void stopBoardSession();
+  }, []);
+  const handleOwnershipTransferred = handleDisconnect;
 
-  if (!session) {
+  if (boardState.type !== 'connected') {
     return (
       <SafeAreaView style={styles.container}>
         <StatusBar barStyle="light-content" backgroundColor={colors.bg} />
-        <PairingScreen onPaired={handlePaired} notice={notice} />
+        <PairingScreen notice={notice} />
       </SafeAreaView>
     );
   }
 
-  const client = session.client;
+  const client = boardState.client;
   const closeDetail = (): void => setDetail(null);
   const closeSettings = (): void => setSettingsOpen(false);
 
@@ -230,7 +230,7 @@ function AppContent(): React.JSX.Element {
         ) : (
           <DashboardScreen
             client={client}
-            deviceName={session.device.name}
+            deviceName={boardState.device.name}
             onOpenSettings={() => setSettingsOpen(true)}
           />
         )}

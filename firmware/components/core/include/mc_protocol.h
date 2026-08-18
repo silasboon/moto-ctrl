@@ -93,10 +93,14 @@ typedef enum {
 /* device->client: [result:1] then MC_OUTPUT_COUNT *
  * [open_load_ma:u16le][overcurrent_ma:u16le], then
  * [lv_cutoff_mv:u16le][lv_cutoff_hysteresis_mv:u16le]
- * [engine_run_mv:u16le][engine_run_hysteresis_mv:u16le] */
+ * [engine_run_mv:u16le][engine_run_hysteresis_mv:u16le]
+ * [engine_run_voltage_detection_enabled:u8] (schema_version 9 -- absent
+ * from any client built against an older protocol revision, since this is
+ * a fixed-shape binary payload rather than the tolerant CONFIG-channel
+ * JSON; see docs/PROTOCOL.md §12.4) */
 #define MC_OP_DIAG_CONFIG 0x8B
 /* client->device: same shape as MC_OP_DIAG_CONFIG's payload, minus the
- * leading result byte (MC_OUTPUT_COUNT*4 + 8 bytes) */
+ * leading result byte (MC_OUTPUT_COUNT*4 + 8 + 1 bytes) */
 #define MC_OP_DIAG_SET_CONFIG 0x0C
 #define MC_OP_DIAG_GET_CALIB 0x0D   /* client->device: (no payload) */
 /* device->client: [result:1][is_gain:f32le][is_offset_mv:i16le]

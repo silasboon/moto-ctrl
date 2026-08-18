@@ -4,8 +4,16 @@
  * mc_diag — current-sense diagnostics (IS mux driver, current
  * calibration, faults, blown-bulb detection), plus the two safety signals
  * that ride the same two analog lines:
- *   - Starter protection's engine_running signal (voltage-based charging
- *     detection).
+ *   - Starter protection's engine_running signal. Two independent
+ *     contributors, either of which can set it: voltage-based charging
+ *     detection (opt-in, OFF by default — see
+ *     engine_run_voltage_detection_enabled below) and an unconditional
+ *     ignition-off override that forces it false whenever an ignition
+ *     channel is assigned and not live, regardless of voltage. The
+ *     override is not a detection method and has no on/off switch: an
+ *     engine cannot be running with its ignition off, so this holds no
+ *     matter what a booster pack or a bench PSU is doing to the battery
+ *     line.
  *   - Battery protection's low-voltage cutoff (disables non-essential
  *     outputs below a configurable threshold; never the unlock path).
  *
@@ -89,9 +97,27 @@ typedef struct {
 
     /* Above this, mc_diag_tick() considers the alternator/charging system
      * live and sets engine_running (starter protection). Clears it once
-     * battery_mv < engine_run_mv - engine_run_hysteresis_mv. */
+     * battery_mv < engine_run_mv - engine_run_hysteresis_mv. Only consulted
+     * at all while engine_run_voltage_detection_enabled is true — see that
+     * field. */
     uint16_t engine_run_mv;
     uint16_t engine_run_hysteresis_mv;
+
+    /* OFF by default (schema_version 9). Voltage alone cannot tell a
+     * running alternator from a booster pack or a bench PSU holding the
+     * line above engine_run_mv — both look identical on VSENSE_BAT — so a
+     * rider jump-starting a dead bike would find the starter refused
+     * exactly when they need it (MC_OUT_ERR_STARTER_ENGINE_RUNNING). This
+     * makes voltage-based detection an explicit opt-in instead of an
+     * always-on heuristic: leave it off and engine_running is driven
+     * entirely by the ignition-off override above (i.e. it can only ever
+     * be true while ignition is live, and only once an input-based signal
+     * exists to actually assert that — see the module header). Turning
+     * this on trades that safety for the convenience of starter-protection
+     * and mc_lock's parked-detection guard reacting without any wiring;
+     * turn it back off if a booster pack, an unusually strong charging
+     * system, or a bench supply ever produces a false "running" read. */
+    bool engine_run_voltage_detection_enabled;
 } mc_diag_config_t;
 
 void mc_diag_config_default(mc_diag_config_t *out);

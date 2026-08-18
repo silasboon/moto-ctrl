@@ -159,8 +159,24 @@ void mc_input_init(mc_input_engine_t *eng, const mc_input_config_t *config);
 void mc_input_set_config(mc_input_engine_t *eng, const mc_input_config_t *config);
 
 /* Feed the current sampled state of all 8 buttons (true = pressed).
- * Call at a fixed poll interval. May enqueue zero or more events. */
+ *
+ * Timing is all elapsed-time comparisons against now_ms rather than a
+ * counted cadence, so an irregular poll interval stays correct — but a
+ * press is only ever observed at poll time, so the interval must stay well
+ * under the shortest press worth catching. mc_power slows this loop while
+ * parked, which is why the platform also has to wake it from a GPIO
+ * interrupt rather than relying on the timer alone. */
 void mc_input_poll(mc_input_engine_t *eng, uint32_t now_ms, const bool raw_pressed[MC_INPUT_COUNT]);
+
+/* True while anything button-related is in flight: a button down (raw or
+ * debounced), a press awaiting its double-press gap, a partially-matched
+ * sequence combo, or a queued event nobody has drained yet.
+ *
+ * mc_power's hold-awake gate. Idling the loop down mid-gesture would
+ * swallow it — and since short presses are what feed the unlock
+ * cheat-code, that would mean a rider entering a code on a parked bike
+ * could not get in (layered unlock). */
+bool mc_input_activity_pending(const mc_input_engine_t *eng);
 
 /* Pops the oldest queued event into *out. Returns false if the queue is empty. */
 bool mc_input_pop_event(mc_input_engine_t *eng, mc_input_event_t *out);

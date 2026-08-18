@@ -31,6 +31,7 @@ add_library(moto_ctrl_core STATIC
     ${CORE_DIR}/mc_session.c
     ${CORE_DIR}/mc_lock.c
     ${CORE_DIR}/mc_diag.c
+    ${CORE_DIR}/mc_power.c
     ${CORE_DIR}/mc_ota.c
     ${CORE_DIR}/mc_event_log.c
     ${CORE_DIR}/vendor/tweetnacl/tweetnacl.c

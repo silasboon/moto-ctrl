@@ -266,7 +266,7 @@ typedef struct {
 typedef struct {
     mc_output_config_t config;
     mc_output_hal_t hal;
-    bool engine_running;         /* set by mc_diag's voltage-based detection */
+    bool engine_running;         /* set by mc_diag; see mc_diag.h */
     bool interlock_engaged;      /* set by mc_input once wired */
     bool immobilized;            /* set by mc_lock while LOCKED */
     bool lv_cutoff;               /* set by mc_diag below the low-voltage threshold */
@@ -325,6 +325,14 @@ bool mc_output_get_state(const mc_output_engine_t *eng, uint8_t channel);
  * tick — critical for a MC_OUT_BEHAVIOUR_BLINK channel, whose off-phase
  * must read as "not energized" rather than a spurious open-load fault. */
 bool mc_output_get_actual_state(const mc_output_engine_t *eng, uint8_t channel, uint32_t now_ms);
+
+/* True if ANY channel is commanded on or actually driven right now.
+ *
+ * mc_power's hold-awake gate: while this holds, the loop must keep running
+ * at full rate. Commanded state is checked as well as driven state on
+ * purpose — a BLINK channel spends half its cycle dark, and idling down
+ * during the off phase would stall the very tick that turns it back on. */
+bool mc_output_any_active(const mc_output_engine_t *eng, uint32_t now_ms);
 
 /* Toggles hazards: if either indicator side is currently off, turns both
  * on together (bypassing the mutual-exclusion rule mc_output_set() applies

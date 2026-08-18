@@ -413,7 +413,7 @@ function cmdDiagGet() { send(MC_CH.COMMAND, MC_OP.DIAG_GET, new Uint8Array(0)); 
 function cmdDiagGetConfig() { send(MC_CH.COMMAND, MC_OP.DIAG_GET_CONFIG, new Uint8Array(0)); }
 
 function cmdDiagSetConfig(cfg) {
-    const body = new Uint8Array(1 + OUTPUT_COUNT * 4 + 8);
+    const body = new Uint8Array(1 + OUTPUT_COUNT * 4 + 8 + 1);
     const dv = new DataView(body.buffer);
     let pos = 0;
     body[pos++] = MC_OP.DIAG_SET_CONFIG;
@@ -425,6 +425,7 @@ function cmdDiagSetConfig(cfg) {
     dv.setUint16(pos, cfg.lvCutoffHysteresisMv, true); pos += 2;
     dv.setUint16(pos, cfg.engineRunMv, true); pos += 2;
     dv.setUint16(pos, cfg.engineRunHysteresisMv, true); pos += 2;
+    dv.setUint8(pos, cfg.engineRunVoltageDetectionEnabled ? 1 : 0); pos += 1;
     send(MC_CH.COMMAND, MC_OP.DIAG_SET_CONFIG, body.subarray(1));
 }
 
@@ -466,7 +467,8 @@ function onDiagConfig(p) {
     const lvCutoffHysteresisMv = readU16le(p, pos); pos += 2;
     const engineRunMv = readU16le(p, pos); pos += 2;
     const engineRunHysteresisMv = readU16le(p, pos); pos += 2;
-    state.diagConfig = { channels, lvCutoffMv, lvCutoffHysteresisMv, engineRunMv, engineRunHysteresisMv };
+    const engineRunVoltageDetectionEnabled = p[pos] !== 0; pos += 1;
+    state.diagConfig = { channels, lvCutoffMv, lvCutoffHysteresisMv, engineRunMv, engineRunHysteresisMv, engineRunVoltageDetectionEnabled };
     renderDiagConfig();
     logLocal('diag config refreshed');
 }
@@ -499,6 +501,7 @@ function readDiagConfigFromDom() {
         lvCutoffHysteresisMv: parseInt(document.getElementById('diag-lv-cutoff-hyst-mv').value, 10) || 0,
         engineRunMv: parseInt(document.getElementById('diag-engine-run-mv').value, 10) || 0,
         engineRunHysteresisMv: parseInt(document.getElementById('diag-engine-run-hyst-mv').value, 10) || 0,
+        engineRunVoltageDetectionEnabled: document.getElementById('diag-engine-run-detect-enabled').checked,
     };
 }
 
@@ -855,9 +858,12 @@ function renderDiagConfig() {
     setIfIdle('diag-lv-cutoff-hyst-mv', cfg.lvCutoffHysteresisMv);
     setIfIdle('diag-engine-run-mv', cfg.engineRunMv);
     setIfIdle('diag-engine-run-hyst-mv', cfg.engineRunHysteresisMv);
+    const detectEl = document.getElementById('diag-engine-run-detect-enabled');
+    if (detectEl && document.activeElement !== detectEl) detectEl.checked = cfg.engineRunVoltageDetectionEnabled;
     document.getElementById('diag-config-summary').textContent =
         `cutoff ${(cfg.lvCutoffMv / 1000).toFixed(1)}V (+${cfg.lvCutoffHysteresisMv}mV) · ` +
-        `engine-run ${(cfg.engineRunMv / 1000).toFixed(1)}V (+${cfg.engineRunHysteresisMv}mV)`;
+        `engine-run ${(cfg.engineRunMv / 1000).toFixed(1)}V (+${cfg.engineRunHysteresisMv}mV)` +
+        (cfg.engineRunVoltageDetectionEnabled ? '' : ' [voltage detection OFF]');
 }
 
 function renderDiagCalib() {

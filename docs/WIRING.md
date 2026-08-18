@@ -102,14 +102,22 @@ each is ticked explicitly rather than inferred from a name (see
 
 The starter output is intentionally **not triggerable from the app** — only
 the physical handlebar starter button (via CN2, below) can fire it, and
-only when the immobilizer isn't `LOCKED` and the firmware's voltage-based
-`engine_running` detection says the engine isn't already running. Wire it
-the way you'd wire any
-starter-relay trigger circuit: the output drives the starter relay coil,
-not the starter motor directly. If your bike has (or you're adding) a
-neutral/clutch safety interlock, wire that switch to one of the eight
-button inputs and assign it as the `starter_interlock_input` on the Outputs
-screen — it's optional but recommended.
+only when the immobilizer isn't `LOCKED` and the firmware doesn't believe
+the engine is already running. Two independent checks decide that: if you've
+assigned an output channel as the ignition (see below), that channel being
+off always blocks the starter, with no configuration needed — an engine
+can't be running with its ignition off. Voltage-based detection (reading
+the charging line) is a second, **opt-in** layer you can turn on in
+Diagnostics if you want the same protection to react automatically once the
+engine is actually turning over; it's off by default because a booster pack
+or jump box on the battery terminals looks identical to a running
+alternator, and you don't want the starter refused on exactly the bike
+you're trying to jump-start. Wire the starter output the way you'd wire any
+starter-relay trigger circuit: it drives the starter relay coil, not the
+starter motor directly. If your bike has (or you're adding) a neutral/clutch
+safety interlock, wire that switch to one of the eight button inputs and
+assign it as the `starter_interlock_input` on the Outputs screen — it's
+optional but recommended.
 
 ### Brake light — priority over any flasher pattern
 

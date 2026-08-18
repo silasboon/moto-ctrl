@@ -26,3 +26,9 @@ void gatt_svr_push_input_event(uint8_t button, uint8_t press_type, bool action_s
  * and the buttons being pressed must not also fire whatever they are bound
  * to. The caller skips its binding dispatch while this holds. */
 bool gatt_svr_input_actions_suppressed(void);
+
+/* How many BLE clients are currently attached. mc_power keeps the loop out
+ * of its parked profile while anyone is connected — slow advertising does
+ * nothing for an established link, and the slowest tick would just make the
+ * app feel laggy while it is in use. */
+uint8_t gatt_svr_connection_count(void);

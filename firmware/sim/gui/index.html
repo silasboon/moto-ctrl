@@ -96,6 +96,12 @@
             <span style="width:80px;margin-left:8px">hysteresis</span>
             <input type="number" id="diag-engine-run-hyst-mv" style="width:80px" min="0" max="65535"> mV
         </div>
+        <div class="row-flex" style="margin-top:6px">
+            <label class="row-flex"><input type="checkbox" id="diag-engine-run-detect-enabled"> voltage-based
+                engine-running detection (off by default -- a booster pack or bench PSU above the
+                threshold looks identical to a charging alternator; an assigned ignition channel
+                being off always wins regardless of this setting)</label>
+        </div>
         <div class="row-flex" style="margin-top:14px">
             <span style="width:150px">Calibration: IS gain</span>
             <input type="number" id="diag-calib-is-gain" style="width:80px" step="0.01">

@@ -59,6 +59,19 @@
 	</dict>
 	<key>NSBluetoothAlwaysUsageDescription</key>
 	<string>MOTO-CTRL connects to your bike's control board over Bluetooth to control lights, signals, and the immobilizer.</string>
+	<!-- Lets the app reconnect to a paired board and unlock the immobilizer
+	     while backgrounded or suspended, not just while open on screen --
+	     src/ble/BoardSession.ts's watcher connects directly to the
+	     already-known peripheral ID (no background scan involved, so
+	     CoreBluetooth's background-scan restrictions don't apply here), and
+	     the restoreStateIdentifier / restoreStateFunction passed to
+	     BleManager in src/ble/bleManager.ts let the app pick that watch back
+	     up if iOS relaunches it for a BLE event after fully terminating it.
+	     Neither works without this capability declared. -->
+	<key>UIBackgroundModes</key>
+	<array>
+		<string>bluetooth-central</string>
+	</array>
 	<key>NSLocationWhenInUseUsageDescription</key>
 	<string>Location is required to manage unlocking the bike </string>
 	<key>RCTNewArchEnabled</key>

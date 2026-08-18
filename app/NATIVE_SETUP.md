@@ -12,6 +12,14 @@ Both platforms are already configured for what this app needs:
   Android declares `BLUETOOTH_SCAN` (with `neverForLocation`) and
   `BLUETOOTH_CONNECT` for API 31+, plus the legacy
   `BLUETOOTH`/`BLUETOOTH_ADMIN` permissions capped at `maxSdkVersion="30"`.
+- Background BLE reconnect (`src/ble/BoardSession.ts`; see
+  [`README.md`](README.md) for the full picture). iOS: `UIBackgroundModes`
+  → `bluetooth-central` in Info.plist. Android: `BleWatchService`, a small
+  custom native module and foreground service at
+  `android/app/src/main/java/com/motoctrl/app/ble/`, registered in
+  `MainApplication.kt`'s package list, with its own manifest permissions
+  (`FOREGROUND_SERVICE`, `FOREGROUND_SERVICE_CONNECTED_DEVICE`,
+  `POST_NOTIFICATIONS`) and `<service>` declaration.
 
 ## Running on a device or simulator
 
@@ -45,8 +53,15 @@ generated `ios/` and `android/` directories into `app/`, leaving the JS/TS
 source untouched.
 
 **Review the diff carefully before committing.** Regenerating overwrites
-the local changes listed above — the bundle identifier / application ID and
-the BLE permission declarations are not part of the stock template and must
-be re-applied by hand if the regenerated project drops them. Changing the
-bundle identifier is effectively permanent once an app has been published,
-so don't let a regeneration silently reset it.
+the local changes listed above — the bundle identifier / application ID,
+the BLE permission declarations, and the entire background-reconnect setup
+(Info.plist's `UIBackgroundModes`, and Android's `BleWatchService` +
+`MainApplication.kt` registration + manifest entries, none of which are
+part of the stock template) must be re-applied by hand if the regenerated
+project drops them. The `android/app/src/main/java/com/motoctrl/app/ble/`
+directory itself won't be touched by the regeneration (it's outside what
+the RN CLI template writes), but `MainApplication.kt` and
+`AndroidManifest.xml` will be, so double-check
+`BleWatchPackage()`/permissions/`<service>` are still there afterward.
+Changing the bundle identifier is effectively permanent once an app has
+been published, so don't let a regeneration silently reset it either.

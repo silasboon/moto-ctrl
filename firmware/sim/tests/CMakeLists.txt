@@ -13,6 +13,7 @@ foreach(test_name
         test_session
         test_lock
         test_diag
+        test_power
         test_ota
         test_event_log)
     add_executable(${test_name} ${test_name}.c)
